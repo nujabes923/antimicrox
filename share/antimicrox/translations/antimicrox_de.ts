@@ -5532,7 +5532,7 @@ Sie können manuell migrieren, indem Sie das alte Verzeichnis umbenennen und die
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="364"/>
-        <source>Controller identifier &apos;%s&apos;&apos; is not a valid value.</source>
+        <source>Controller identifier &apos;%s&apos; is not a valid value.</source>
         <translation>Der Controller-Bezeichner &apos;%s&apos; ist kein gültiger Wert.</translation>
     </message>
     <message>

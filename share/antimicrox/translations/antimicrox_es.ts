@@ -5727,8 +5727,8 @@ Puede migrar manualmente cambiando el nombre del directorio antiguo y cambiando 
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="364"/>
-        <source>Controller identifier &apos;%s&apos;&apos; is not a valid value.</source>
-        <translation>El identificador de controlador &apos;%s&apos;&apos; no es un valor válido.</translation>
+        <source>Controller identifier &apos;%s&apos; is not a valid value.</source>
+        <translation>El identificador de controlador &apos;%s&apos; no es un valor válido.</translation>
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="369"/>

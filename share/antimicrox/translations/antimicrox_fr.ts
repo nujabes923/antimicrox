@@ -5572,7 +5572,7 @@ Vous pouvez manuellement migrer en renommant l&apos;ancien dossier et en renomma
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="364"/>
-        <source>Controller identifier &apos;%s&apos;&apos; is not a valid value.</source>
+        <source>Controller identifier &apos;%s&apos; is not a valid value.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

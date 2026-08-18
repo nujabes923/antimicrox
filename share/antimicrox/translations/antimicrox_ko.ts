@@ -5816,8 +5816,8 @@ You can migrate manually by renaming old directory and renaming file to antimicr
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="364"/>
-        <source>Controller identifier &apos;%s&apos;&apos; is not a valid value.</source>
-        <translation>컨트롤러 식별자 &apos;%s&apos;&apos;은(는) 유효한 값이 아닙니다.</translation>
+        <source>Controller identifier &apos;%s&apos; is not a valid value.</source>
+        <translation>컨트롤러 식별자 &apos;%s&apos;은(는) 유효한 값이 아닙니다.</translation>
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="369"/>

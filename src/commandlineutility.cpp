@@ -360,7 +360,7 @@ void CommandLineUtility::parseArgsStartSet(const QCommandLineParser &parser)
             } else
             {
                 throw std::runtime_error(
-                    QObject::tr("Controller identifier '%s'' is not a valid value.").arg(startSetText).toStdString());
+                    QObject::tr("Controller identifier '%s' is not a valid value.").arg(startSetText).toStdString());
             }
         }
     } else

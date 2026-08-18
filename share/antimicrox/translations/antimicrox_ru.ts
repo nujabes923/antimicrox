@@ -5921,8 +5921,8 @@ You can migrate manually by renaming old directory and renaming file to antimicr
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="364"/>
-        <source>Controller identifier &apos;%s&apos;&apos; is not a valid value.</source>
-        <translation>Идентификатор контроллера &apos;%s&apos;&apos; не является допустимым значением.</translation>
+        <source>Controller identifier &apos;%s&apos; is not a valid value.</source>
+        <translation>Идентификатор контроллера &apos;%s&apos; не является допустимым значением.</translation>
     </message>
     <message>
         <location filename="../../../src/commandlineutility.cpp" line="369"/>
