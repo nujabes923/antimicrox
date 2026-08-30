@@ -3,7 +3,9 @@
 build/
 builds/
 build-dir/
+build-*/
 Build/
+dist/
 .flatpak-builder/
 repo/
 docs/

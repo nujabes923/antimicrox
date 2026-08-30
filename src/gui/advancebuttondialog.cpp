@@ -39,6 +39,7 @@
 #include <QListWidgetItem>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
@@ -76,6 +77,13 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
 
     ui->turboSlider->setValue(interval);
     this->changeTurboText(interval);
+
+    ui->randomTurboCheckBox->setChecked(m_button->isUsingRandomTurbo());
+    ui->randomTurboMinimumSpinBox->setValue(m_button->getRandomTurboMinimum());
+    ui->randomTurboMaximumSpinBox->setValue(m_button->getRandomTurboMaximum());
+    ui->randomTurboCheckBox->setEnabled(m_button->isUsingTurbo());
+    ui->randomTurboMinimumSpinBox->setEnabled(m_button->isUsingTurbo() && m_button->isUsingRandomTurbo());
+    ui->randomTurboMaximumSpinBox->setEnabled(m_button->isUsingTurbo() && m_button->isUsingRandomTurbo());
 
     QListIterator<JoyButtonSlot *> iter(*(m_button->getAssignedSlots()));
 
@@ -222,6 +230,23 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
 
     connect(ui->turboCheckbox, &QCheckBox::clicked, ui->turboSlider, &QSlider::setEnabled);
     connect(ui->turboSlider, &QSlider::valueChanged, this, &AdvanceButtonDialog::checkTurboIntervalValue);
+    connect(ui->randomTurboCheckBox, &QCheckBox::toggled, this, [this](bool enabled) {
+        ui->randomTurboMinimumSpinBox->setEnabled(enabled && ui->turboCheckbox->isChecked());
+        ui->randomTurboMaximumSpinBox->setEnabled(enabled && ui->turboCheckbox->isChecked());
+        m_button->setUseRandomTurbo(enabled);
+    });
+    connect(ui->randomTurboMinimumSpinBox, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+            [this](int value) {
+                if (value > ui->randomTurboMaximumSpinBox->value())
+                    ui->randomTurboMaximumSpinBox->setValue(value);
+                m_button->setRandomTurboMinimum(value);
+            });
+    connect(ui->randomTurboMaximumSpinBox, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+            [this](int value) {
+                if (value < ui->randomTurboMinimumSpinBox->value())
+                    ui->randomTurboMinimumSpinBox->setValue(value);
+                m_button->setRandomTurboMaximum(value);
+            });
 
     connect(ui->insertSlotButton, &QPushButton::clicked, this, &AdvanceButtonDialog::insertSlot);
     connect(ui->joinSlotButton, &QPushButton::clicked, this, &AdvanceButtonDialog::joinSlot);
@@ -873,6 +898,9 @@ void AdvanceButtonDialog::checkTurboSetting(bool state)
 {
     ui->turboCheckbox->setChecked(state);
     ui->turboSlider->setEnabled(state);
+    ui->randomTurboCheckBox->setEnabled(state);
+    ui->randomTurboMinimumSpinBox->setEnabled(state && ui->randomTurboCheckBox->isChecked());
+    ui->randomTurboMaximumSpinBox->setEnabled(state && ui->randomTurboCheckBox->isChecked());
 
     if (m_button->isPartRealAxis())
         ui->turboModeComboBox->setEnabled(state);

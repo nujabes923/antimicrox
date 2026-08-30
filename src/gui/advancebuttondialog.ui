@@ -1038,6 +1038,81 @@
           </widget>
          </item>
          <item>
+          <widget class="QCheckBox" name="randomTurboCheckBox">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="toolTip">
+            <string>Choose a new press-to-press interval for every turbo cycle.</string>
+           </property>
+           <property name="text">
+            <string>Random interval</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="randomTurboRangeLayout">
+           <item>
+            <widget class="QLabel" name="randomTurboMinimumLabel">
+             <property name="text">
+              <string>Minimum:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QSpinBox" name="randomTurboMinimumSpinBox">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
+             <property name="suffix">
+              <string> ms</string>
+             </property>
+             <property name="minimum">
+              <number>20</number>
+             </property>
+             <property name="maximum">
+              <number>4000</number>
+             </property>
+             <property name="singleStep">
+              <number>10</number>
+             </property>
+             <property name="value">
+              <number>100</number>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="randomTurboMaximumLabel">
+             <property name="text">
+              <string>Maximum:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QSpinBox" name="randomTurboMaximumSpinBox">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
+             <property name="suffix">
+              <string> ms</string>
+             </property>
+             <property name="minimum">
+              <number>20</number>
+             </property>
+             <property name="maximum">
+              <number>4000</number>
+             </property>
+             <property name="singleStep">
+              <number>10</number>
+             </property>
+             <property name="value">
+              <number>100</number>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
           <spacer name="verticalSpacer_4">
            <property name="orientation">
             <enum>Qt::Vertical</enum>

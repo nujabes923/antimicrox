@@ -33,6 +33,7 @@
 #include <QStringList>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
+#include <QRandomGenerator>
 #include <QtConcurrent>
 #include <chrono>
 
@@ -410,6 +411,12 @@ bool JoyButton::getToggleState() { return m_toggle; }
 
 int JoyButton::getTurboInterval() { return turboInterval; }
 
+bool JoyButton::isUsingRandomTurbo() { return m_useRandomTurbo; }
+
+int JoyButton::getRandomTurboMinimum() { return randomTurboMinimum; }
+
+int JoyButton::getRandomTurboMaximum() { return randomTurboMaximum; }
+
 void JoyButton::turboEvent() { changeTurboParams(isKeyPressed, isButtonPressed); }
 
 void JoyButton::changeTurboParams(bool _isKeyPressed, bool isButtonPressed)
@@ -439,8 +446,52 @@ void JoyButton::changeTurboParams(bool _isKeyPressed, bool isButtonPressed)
     {
         int tempInterval = turboInterval / 2;
 
+        if (m_useRandomTurbo && currentTurboMode == NormalTurbo)
+        {
+            if (isKeyPressed)
+            {
+                const int minimum = qMin(randomTurboMinimum, randomTurboMaximum);
+                const int maximum = qMax(randomTurboMinimum, randomTurboMaximum);
+                tempTurboInterval = QRandomGenerator::global()->bounded(minimum, maximum + 1);
+                tempInterval = tempTurboInterval / 2;
+            } else
+            {
+                tempInterval = tempTurboInterval - (tempTurboInterval / 2);
+            }
+        }
+
         if (turboTimer.interval() != tempInterval)
             turboTimer.start(tempInterval);
+    }
+}
+
+void JoyButton::setUseRandomTurbo(bool enabled)
+{
+    if (m_useRandomTurbo != enabled)
+    {
+        m_useRandomTurbo = enabled;
+        emit randomTurboChanged(enabled);
+        emit propertyUpdated();
+    }
+}
+
+void JoyButton::setRandomTurboMinimum(int interval)
+{
+    interval = qMax(interval, 10);
+    if (randomTurboMinimum != interval)
+    {
+        randomTurboMinimum = interval;
+        emit propertyUpdated();
+    }
+}
+
+void JoyButton::setRandomTurboMaximum(int interval)
+{
+    interval = qMax(interval, 10);
+    if (randomTurboMaximum != interval)
+    {
+        randomTurboMaximum = interval;
+        emit propertyUpdated();
     }
 }
 
@@ -3478,6 +3529,7 @@ bool JoyButton::isDefault()
 
     value = value && (m_toggle == GlobalVariables::JoyButton::DEFAULTTOGGLE);
     value = value && (turboInterval == GlobalVariables::JoyButton::DEFAULTTURBOINTERVAL);
+    value = value && !m_useRandomTurbo;
     value = value && (currentTurboMode == NormalTurbo);
     value = value && (m_useTurbo == GlobalVariables::JoyButton::DEFAULTUSETURBO);
     value = value && (mouseSpeedX == GlobalVariables::JoyButton::DEFAULTMOUSESPEEDX);
@@ -4070,7 +4122,10 @@ void JoyButton::copyAssignments(JoyButton *destButton)
 
     destButton->m_toggle = m_toggle;
     destButton->turboInterval = turboInterval;
+    destButton->randomTurboMinimum = randomTurboMinimum;
+    destButton->randomTurboMaximum = randomTurboMaximum;
     destButton->m_useTurbo = m_useTurbo;
+    destButton->m_useRandomTurbo = m_useRandomTurbo;
     destButton->mouseSpeedX = mouseSpeedX;
     destButton->mouseSpeedY = mouseSpeedY;
     destButton->wheelSpeedX = wheelSpeedX;
@@ -4309,8 +4364,11 @@ void JoyButton::resetAllProperties()
     actionName.clear();
     m_toggle = GlobalVariables::JoyButton::DEFAULTTOGGLE;
     turboInterval = GlobalVariables::JoyButton::DEFAULTTURBOINTERVAL;
+    randomTurboMinimum = GlobalVariables::JoyButton::ENABLEDTURBODEFAULT;
+    randomTurboMaximum = GlobalVariables::JoyButton::ENABLEDTURBODEFAULT;
     currentTurboMode = NormalTurbo;
     m_useTurbo = GlobalVariables::JoyButton::DEFAULTUSETURBO;
+    m_useRandomTurbo = false;
     isDown = false;
     toggleActiveState = false;
     m_useTurbo = false;

@@ -57,6 +57,18 @@ bool JoyButtonXml::readButtonConfig(QXmlStreamReader *xml)
             m_joyButton->setTurboMode(JoyButton::GradientTurbo);
         else if (temptext == "pulse")
             m_joyButton->setTurboMode(JoyButton::PulseTurbo);
+    } else if ((xml->name().toString() == "turborandom") && xml->isStartElement())
+    {
+        found = true;
+        m_joyButton->setUseRandomTurbo(xml->readElementText() == "true");
+    } else if ((xml->name().toString() == "turborandomminimum") && xml->isStartElement())
+    {
+        found = true;
+        m_joyButton->setRandomTurboMinimum(xml->readElementText().toInt());
+    } else if ((xml->name().toString() == "turborandommaximum") && xml->isStartElement())
+    {
+        found = true;
+        m_joyButton->setRandomTurboMaximum(xml->readElementText().toInt());
     } else if ((xml->name().toString() == "useturbo") && xml->isStartElement())
     {
         found = true;
@@ -351,6 +363,13 @@ void JoyButtonXml::writeConfig(QXmlStreamWriter *xml)
 
         if (m_joyButton->getTurboInterval() != GlobalVariables::JoyButton::DEFAULTTURBOINTERVAL)
             xml->writeTextElement("turbointerval", QString::number(m_joyButton->getTurboInterval()));
+
+        if (m_joyButton->isUsingRandomTurbo())
+        {
+            xml->writeTextElement("turborandom", "true");
+            xml->writeTextElement("turborandomminimum", QString::number(m_joyButton->getRandomTurboMinimum()));
+            xml->writeTextElement("turborandommaximum", QString::number(m_joyButton->getRandomTurboMaximum()));
+        }
 
         if ((m_joyButton->getTurboMode() != JoyButton::DEFAULTTURBOMODE) &&
             (m_joyButton->getTurboMode() == JoyButton::GradientTurbo))

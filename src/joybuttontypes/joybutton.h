@@ -125,6 +125,7 @@ class JoyButton : public QObject
     bool hasPendingEvent(); // JoyButtonEvents class
     bool getToggleState();
     bool isUsingTurbo();
+    bool isUsingRandomTurbo();
     bool getButtonState();
     bool containsSequence();
     bool containsDistanceSlots(); // JoyButtonSlots class
@@ -147,6 +148,8 @@ class JoyButton : public QObject
 
     int getJoyNumber();
     int getTurboInterval();
+    int getRandomTurboMinimum();
+    int getRandomTurboMaximum();
     int getMouseSpeedX();
     int getMouseSpeedY();
     int getWheelSpeedX();
@@ -301,6 +304,8 @@ class JoyButton : public QObject
 
     int m_index_sdl; // Used to denote the SDL index of the actual joypad button
     int turboInterval;
+    int randomTurboMinimum;
+    int randomTurboMaximum;
     int wheelSpeedX;
     int wheelSpeedY;
     int setSelection;
@@ -346,6 +351,7 @@ class JoyButton : public QObject
     void turboChanged(bool state);
     void toggleChanged(bool state);
     void turboIntervalChanged(int interval);
+    void randomTurboChanged(bool enabled);
     void slotsChanged(); // JoyButtonSlots class
     void actionNameChanged();
     void buttonNameChanged();
@@ -354,6 +360,9 @@ class JoyButton : public QObject
 
   public slots:
     void setTurboInterval(int interval);
+    void setUseRandomTurbo(bool enabled);
+    void setRandomTurboMinimum(int interval);
+    void setRandomTurboMaximum(int interval);
     void setToggle(bool toggle);
     void setUseTurbo(bool useTurbo);
     void setMouseSpeedX(int speed);
@@ -557,6 +566,7 @@ class JoyButton : public QObject
     bool isDown;
     bool toggleActiveState;
     bool m_useTurbo;
+    bool m_useRandomTurbo;
     bool lastUnlessInList;
     bool m_ignoresets;
     bool ignoreEvents; // JoyButtonEvents class
