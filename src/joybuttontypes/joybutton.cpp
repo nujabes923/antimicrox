@@ -417,7 +417,25 @@ int JoyButton::getRandomTurboMinimum() { return randomTurboMinimum; }
 
 int JoyButton::getRandomTurboMaximum() { return randomTurboMaximum; }
 
-void JoyButton::turboEvent() { changeTurboParams(isKeyPressed, isButtonPressed); }
+void JoyButton::turboEvent()
+{
+    // A Delay slot is allowed in a turbo assignment. Do not let the turbo
+    // release phase interrupt that delay, otherwise slots after the delay are
+    // never reached. Once the delay finishes, keep the completed part of the
+    // sequence pressed for the normal turbo press duration before releasing it.
+    if (isKeyPressed && (currentDelay != nullptr))
+    {
+        const int remainingDelay = qMax(0, currentDelay->getSlotCode() - static_cast<int>(buttonDelay.elapsed()));
+        const int cycleInterval =
+            (m_useRandomTurbo && currentTurboMode == NormalTurbo) ? tempTurboInterval : turboInterval;
+        const int pressDuration = qMax(1, cycleInterval / 2);
+
+        turboTimer.start(remainingDelay + pressDuration);
+        return;
+    }
+
+    changeTurboParams(isKeyPressed, isButtonPressed);
+}
 
 void JoyButton::changeTurboParams(bool _isKeyPressed, bool isButtonPressed)
 {
