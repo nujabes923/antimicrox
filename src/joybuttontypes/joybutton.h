@@ -124,6 +124,7 @@ class JoyButton : public QObject
 
     bool hasPendingEvent(); // JoyButtonEvents class
     bool getToggleState();
+    bool isUsingAlternatingToggle();
     bool isUsingTurbo();
     bool isUsingRandomTurbo();
     bool getButtonState();
@@ -310,6 +311,7 @@ class JoyButton : public QObject
     int wheelSpeedY;
     int setSelection;
     int tempTurboInterval;
+    int alternatingToggleIndex;
     int springDeadCircleMultiplier;
 
     bool isButtonPressed; // Used to denote whether the actual joypad button is pressed
@@ -320,6 +322,7 @@ class JoyButton : public QObject
     double lastWheelHorizontalDistance;
 
     QTimer turboTimer;
+    QTimer alternatingToggleTimer;
     QTimer mouseWheelVerticalEventTimer;
     QTimer mouseWheelHorizontalEventTimer;
 
@@ -352,6 +355,7 @@ class JoyButton : public QObject
     void toggleChanged(bool state);
     void turboIntervalChanged(int interval);
     void randomTurboChanged(bool enabled);
+    void alternatingToggleChanged(bool enabled);
     void slotsChanged(); // JoyButtonSlots class
     void actionNameChanged();
     void buttonNameChanged();
@@ -363,6 +367,7 @@ class JoyButton : public QObject
     void setUseRandomTurbo(bool enabled);
     void setRandomTurboMinimum(int interval);
     void setRandomTurboMaximum(int interval);
+    void setUseAlternatingToggle(bool enabled);
     void setToggle(bool toggle);
     void setUseTurbo(bool useTurbo);
     void setMouseSpeedX(int speed);
@@ -419,6 +424,7 @@ class JoyButton : public QObject
     void waitForReleaseDeskEvent(); // JoyButtonEvents class
     void holdEvent();               // JoyButtonEvents class
     void delayEvent();              // JoyButtonEvents class
+    void alternatingToggleEvent();  // JoyButtonEvents class
     void pauseWaitEvent();          // JoyButtonEvents class
     void checkForSetChange();
     void keyPressEvent(); // JoyButtonEvents class
@@ -455,6 +461,7 @@ class JoyButton : public QObject
         currentDelay = nullptr;
         currentDelayDuration = 0;
         turboWaitingForDelay = false;
+        alternatingToggleIndex = -1;
         if (currentChangedSlot)
             currentSetChangeSlot = nullptr;
 
@@ -474,6 +481,7 @@ class JoyButton : public QObject
         setChangeTimer.stop();
         keyPressTimer.stop();
         delayTimer.stop();
+        alternatingToggleTimer.stop();
 
         if (stoppedSlotSetTimer)
             slotSetChangeTimer.stop();
@@ -550,6 +558,10 @@ class JoyButton : public QObject
     void setDistanceForSpring(JoyButtonMouseHelper &mouseHelper, double &mouseFirstAx, double &mouseSecondAx,
                               double distanceFromDeadZone);
     void changeTurboParams(bool _isKeyPressed, bool isButtonPressed);
+    void startAlternatingToggle();
+    void stopAlternatingToggle();
+    int alternatingDelayAfter(int assignmentIndex);
+    bool isAlternatingAction(const JoyButtonSlot *slot) const;
     void updateParamsAfterDistEvent(); // JoyButtonEvents class
     void startSequenceOfPressActive(bool isTurbo, QString debugText);
     QList<JoyButtonSlot *> &getAssignmentsLocal();
@@ -569,6 +581,7 @@ class JoyButton : public QObject
     bool toggleActiveState;
     bool m_useTurbo;
     bool m_useRandomTurbo;
+    bool m_useAlternatingToggle;
     bool turboWaitingForDelay;
     bool lastUnlessInList;
     bool m_ignoresets;

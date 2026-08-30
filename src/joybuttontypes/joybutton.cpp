@@ -83,6 +83,7 @@ JoyButton::JoyButton(int sdl_button_index, int originset, SetJoystick *parentSet
     threadPool = QThreadPool::globalInstance();
 
     turboTimer.setParent(this);
+    alternatingToggleTimer.setParent(this);
     pauseTimer.setParent(this);
     holdTimer.setParent(this);
     pauseWaitTimer.setParent(this);
@@ -96,6 +97,7 @@ JoyButton::JoyButton(int sdl_button_index, int originset, SetJoystick *parentSet
     slotSetChangeTimer.setParent(this);
     setChangeTimer.setSingleShot(true);
     slotSetChangeTimer.setSingleShot(true);
+    alternatingToggleTimer.setSingleShot(true);
     m_parentSet = parentSet;
 
     connect(&pauseWaitTimer, &QTimer::timeout, this, &JoyButton::pauseWaitEvent);
@@ -105,6 +107,7 @@ JoyButton::JoyButton(int sdl_button_index, int originset, SetJoystick *parentSet
     connect(&createDeskTimer, &QTimer::timeout, this, &JoyButton::waitForDeskEvent);
     connect(&releaseDeskTimer, &QTimer::timeout, this, &JoyButton::waitForReleaseDeskEvent);
     connect(&turboTimer, &QTimer::timeout, this, &JoyButton::turboEvent);
+    connect(&alternatingToggleTimer, &QTimer::timeout, this, &JoyButton::alternatingToggleEvent);
     connect(&mouseWheelVerticalEventTimer, &QTimer::timeout, this, &JoyButton::wheelEventVertical);
     connect(&mouseWheelHorizontalEventTimer, &QTimer::timeout, this, &JoyButton::wheelEventHorizontal);
     connect(&setChangeTimer, &QTimer::timeout, this, &JoyButton::checkForSetChange);
@@ -244,7 +247,19 @@ void JoyButton::joyEvent(bool pressed, bool ignoresets)
                 isButtonPressedQueue.enqueue(isButtonPressed);
             }
 
-            if (m_useTurbo)
+            if (m_useAlternatingToggle && m_toggle)
+            {
+                // The physical press only starts or stops the logical toggle.
+                // Output actions are emitted one at a time by the alternating
+                // timer, so different assigned keys can never overlap.
+                if (pressed)
+                {
+                    if (toggleActiveState)
+                        startAlternatingToggle();
+                    else
+                        stopAlternatingToggle();
+                }
+            } else if (m_useTurbo)
             {
                 if (isButtonPressed && activePress && !turboTimer.isActive())
                 {
@@ -372,6 +387,8 @@ void JoyButton::setToggle(bool toggle)
 {
     if (toggle != m_toggle)
     {
+        if (!toggle)
+            stopAlternatingToggle();
         m_toggle = toggle;
         emit toggleChanged(toggle);
         emit propertyUpdated();
@@ -410,6 +427,8 @@ void JoyButton::reset(int index)
 }
 
 bool JoyButton::getToggleState() { return m_toggle; }
+
+bool JoyButton::isUsingAlternatingToggle() { return m_useAlternatingToggle; }
 
 int JoyButton::getTurboInterval() { return turboInterval; }
 
@@ -509,6 +528,116 @@ void JoyButton::setRandomTurboMaximum(int interval)
         randomTurboMaximum = interval;
         emit propertyUpdated();
     }
+}
+
+void JoyButton::setUseAlternatingToggle(bool enabled)
+{
+    if (m_useAlternatingToggle == enabled)
+        return;
+
+    if (!enabled)
+        stopAlternatingToggle();
+
+    m_useAlternatingToggle = enabled;
+    if (enabled)
+    {
+        setToggle(true);
+        setUseTurbo(false);
+    }
+
+    emit alternatingToggleChanged(enabled);
+    emit propertyUpdated();
+}
+
+bool JoyButton::isAlternatingAction(const JoyButtonSlot *slot) const
+{
+    if (slot == nullptr || slot->getSlotCode() == 0)
+        return false;
+
+    const JoyButtonSlot::JoySlotInputAction mode = slot->getSlotMode();
+    return mode == JoyButtonSlot::JoyKeyboard || mode == JoyButtonSlot::JoyMouseButton;
+}
+
+int JoyButton::alternatingDelayAfter(int assignmentIndex)
+{
+    const int count = getAssignmentsLocal().size();
+    if (count == 0)
+        return 1000;
+
+    for (int offset = 1; offset <= count; ++offset)
+    {
+        JoyButtonSlot *slot = getAssignmentsLocal().at((assignmentIndex + offset) % count);
+        if (isAlternatingAction(slot))
+            break;
+
+        if (slot->getSlotMode() == JoyButtonSlot::JoyDelay)
+        {
+            if (slot->isUsingRandomDelay())
+            {
+                const int minimum = qMax(10, qMin(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
+                const int maximum = qMax(minimum, qMax(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
+                return QRandomGenerator::global()->bounded(minimum, maximum + 1);
+            }
+
+            return qMax(10, slot->getSlotCode());
+        }
+    }
+
+    return 1000;
+}
+
+void JoyButton::startAlternatingToggle()
+{
+    turboTimer.stop();
+    turboWaitingForDelay = false;
+    releaseActiveSlots();
+    alternatingToggleTimer.stop();
+    alternatingToggleIndex = -1;
+    alternatingToggleEvent();
+}
+
+void JoyButton::stopAlternatingToggle()
+{
+    alternatingToggleTimer.stop();
+    alternatingToggleIndex = -1;
+    releaseActiveSlots();
+}
+
+void JoyButton::alternatingToggleEvent()
+{
+    if (!m_useAlternatingToggle || !m_toggle || !toggleActiveState)
+    {
+        stopAlternatingToggle();
+        return;
+    }
+
+    QReadLocker locker(&assignmentsLock);
+    const int count = getAssignmentsLocal().size();
+    if (count == 0)
+        return;
+
+    int nextIndex = -1;
+    for (int offset = 1; offset <= count; ++offset)
+    {
+        const int candidate = (alternatingToggleIndex + offset + count) % count;
+        if (isAlternatingAction(getAssignmentsLocal().at(candidate)))
+        {
+            nextIndex = candidate;
+            break;
+        }
+    }
+
+    if (nextIndex < 0)
+        return;
+
+    alternatingToggleIndex = nextIndex;
+    JoyButtonSlot *slot = getAssignmentsLocal().at(nextIndex);
+    sendevent(slot, true);
+    sendevent(slot, false);
+
+    const int interval = alternatingDelayAfter(nextIndex);
+    qDebug() << "Alternating toggle tapped" << slot->getSlotString() << "next action in" << interval << "ms";
+    alternatingToggleTimer.start(interval);
 }
 
 bool JoyButton::distanceEvent()
@@ -1639,7 +1768,7 @@ void JoyButton::setUseTurbo(bool useTurbo)
 
     if (useTurbo != m_useTurbo)
     {
-        if (useTurbo && this->containsSequence())
+        if (useTurbo && (this->containsSequence() || m_useAlternatingToggle))
             m_useTurbo = false;
         else
             m_useTurbo = useTurbo;
@@ -3582,6 +3711,7 @@ bool JoyButton::isDefault()
     value = value && (m_toggle == GlobalVariables::JoyButton::DEFAULTTOGGLE);
     value = value && (turboInterval == GlobalVariables::JoyButton::DEFAULTTURBOINTERVAL);
     value = value && !m_useRandomTurbo;
+    value = value && !m_useAlternatingToggle;
     value = value && (currentTurboMode == NormalTurbo);
     value = value && (m_useTurbo == GlobalVariables::JoyButton::DEFAULTUSETURBO);
     value = value && (mouseSpeedX == GlobalVariables::JoyButton::DEFAULTMOUSESPEEDX);
@@ -4178,6 +4308,7 @@ void JoyButton::copyAssignments(JoyButton *destButton)
     destButton->randomTurboMaximum = randomTurboMaximum;
     destButton->m_useTurbo = m_useTurbo;
     destButton->m_useRandomTurbo = m_useRandomTurbo;
+    destButton->m_useAlternatingToggle = m_useAlternatingToggle;
     destButton->mouseSpeedX = mouseSpeedX;
     destButton->mouseSpeedY = mouseSpeedY;
     destButton->wheelSpeedX = wheelSpeedX;
@@ -4421,6 +4552,8 @@ void JoyButton::resetAllProperties()
     currentTurboMode = NormalTurbo;
     m_useTurbo = GlobalVariables::JoyButton::DEFAULTUSETURBO;
     m_useRandomTurbo = false;
+    m_useAlternatingToggle = false;
+    alternatingToggleIndex = -1;
     isDown = false;
     toggleActiveState = false;
     m_useTurbo = false;

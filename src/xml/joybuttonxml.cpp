@@ -40,6 +40,10 @@ bool JoyButtonXml::readButtonConfig(QXmlStreamReader *xml)
 
         if (temptext == "true")
             m_joyButton->setToggle(true);
+    } else if ((xml->name().toString() == "alternatingtoggle") && xml->isStartElement())
+    {
+        found = true;
+        m_joyButton->setUseAlternatingToggle(xml->readElementText() == "true");
     } else if ((xml->name().toString() == "turbointerval") && xml->isStartElement())
     {
         found = true;
@@ -360,6 +364,9 @@ void JoyButtonXml::writeConfig(QXmlStreamWriter *xml)
 
         if (m_joyButton->getToggleState() != GlobalVariables::JoyButton::DEFAULTTOGGLE)
             xml->writeTextElement("toggle", m_joyButton->getToggleState() ? "true" : "false");
+
+        if (m_joyButton->isUsingAlternatingToggle())
+            xml->writeTextElement("alternatingtoggle", "true");
 
         if (m_joyButton->getTurboInterval() != GlobalVariables::JoyButton::DEFAULTTURBOINTERVAL)
             xml->writeTextElement("turbointerval", QString::number(m_joyButton->getTurboInterval()));
