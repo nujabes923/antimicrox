@@ -22,6 +22,7 @@
 #include <QLabel>
 #include <QList>
 #include <QPair>
+#include <QStringList>
 #include <QWidget>
 
 #include <SDL_joystick.h>
@@ -121,6 +122,7 @@ class JoyTabWidget : public QWidget
     void showQuickSetDialog();
     void showKeyDelayDialog();
     void showAlternatingSuitesDialog();
+    void toggleAlternatingSuites();
     void alternatingSuitesTimeout();
     void showSetNamesDialog(); // JoyTabWidgetSets class
     void toggleNames();
@@ -169,6 +171,7 @@ class JoyTabWidget : public QWidget
     QPushButton *saveAsButton;
     QPushButton *delayButton;
     QPushButton *alternatingSuitesButton;
+    QPushButton *alternatingSuitesStartButton;
     QComboBox *configBox;
     QGridLayout *gridLayout;
     QGridLayout *gridLayout2;
@@ -231,20 +234,25 @@ class JoyTabWidget : public QWidget
     QString oldProfileName;
     QString alternatingFirstButtonId;
     QString alternatingSecondButtonId;
+    QString alternatingThirdButtonId;
     int alternatingFirstMinimum = 20000;
     int alternatingFirstMaximum = 20000;
     int alternatingSecondMinimum = 15000;
     int alternatingSecondMaximum = 15000;
+    int alternatingThirdMinimum = 10000;
+    int alternatingThirdMaximum = 10000;
     bool alternatingSuitesActive = false;
-    bool alternatingFirstIsActive = false;
+    int alternatingActiveSuiteIndex = -1;
     QTimer *alternatingSuitesTimer;
 
     QList<QPair<QString, JoyButton *>> alternatingSuiteButtons() const;
     JoyButton *resolveAlternatingSuiteButton(const QString &id) const;
-    int alternatingSuiteInterval(bool first) const;
+    int alternatingSuiteInterval(int suiteIndex) const;
     void setAlternatingSuiteRunning(bool running);
     void switchAlternatingSuite();
     QString alternatingSettingsGroup() const;
+    QStringList configuredAlternatingSuiteIds() const;
+    void loadAlternatingSuiteSettings();
 
     JoyTabWidgetHelper tabHelper;
 
