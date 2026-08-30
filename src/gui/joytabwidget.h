@@ -20,6 +20,8 @@
 #define JOYTABWIDGET_H
 
 #include <QLabel>
+#include <QList>
+#include <QPair>
 #include <QWidget>
 
 #include <SDL_joystick.h>
@@ -41,6 +43,7 @@ class QAction;
 class QMenu;
 class QStackedWidget;
 class QSettings;
+class JoyButton;
 
 /**
  * @brief Widget containing tab representing selected joystick.
@@ -117,6 +120,8 @@ class JoyTabWidget : public QWidget
     void showStickAssignmentDialog();
     void showQuickSetDialog();
     void showKeyDelayDialog();
+    void showAlternatingSuitesDialog();
+    void alternatingSuitesTimeout();
     void showSetNamesDialog(); // JoyTabWidgetSets class
     void toggleNames();
     void updateBatteryIcon();
@@ -163,6 +168,7 @@ class JoyTabWidget : public QWidget
     QPushButton *namesPushButton;
     QPushButton *saveAsButton;
     QPushButton *delayButton;
+    QPushButton *alternatingSuitesButton;
     QComboBox *configBox;
     QGridLayout *gridLayout;
     QGridLayout *gridLayout2;
@@ -223,6 +229,22 @@ class JoyTabWidget : public QWidget
     int comboBoxIndex = 0;
     bool hideEmptyButtons = false;
     QString oldProfileName;
+    QString alternatingFirstButtonId;
+    QString alternatingSecondButtonId;
+    int alternatingFirstMinimum = 20000;
+    int alternatingFirstMaximum = 20000;
+    int alternatingSecondMinimum = 15000;
+    int alternatingSecondMaximum = 15000;
+    bool alternatingSuitesActive = false;
+    bool alternatingFirstIsActive = false;
+    QTimer *alternatingSuitesTimer;
+
+    QList<QPair<QString, JoyButton *>> alternatingSuiteButtons() const;
+    JoyButton *resolveAlternatingSuiteButton(const QString &id) const;
+    int alternatingSuiteInterval(bool first) const;
+    void setAlternatingSuiteRunning(bool running);
+    void switchAlternatingSuite();
+    QString alternatingSettingsGroup() const;
 
     JoyTabWidgetHelper tabHelper;
 

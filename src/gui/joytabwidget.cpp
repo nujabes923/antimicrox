@@ -28,6 +28,9 @@
 #include "globalvariables.h"
 #include "inputdevice.h"
 #include "joyaxiswidget.h"
+#include "joyaxis.h"
+#include "joybuttontypes/joyaxisbutton.h"
+#include "joybuttontypes/joybutton.h"
 #include "joybuttontypes/joycontrolstickbutton.h"
 #include "joybuttontypes/joydpadbutton.h"
 #include "joybuttontypes/joysensorbutton.h"
@@ -47,11 +50,18 @@
 #include "gamecontroller/gamecontroller.h"
 #include "gamecontrollermappingdialog.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -60,9 +70,11 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSpacerItem>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -75,6 +87,10 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     , tabHelper(joystick)
 {
     tabHelper.moveToThread(joystick->thread());
+
+    alternatingSuitesTimer = new QTimer(this);
+    alternatingSuitesTimer->setSingleShot(true);
+    connect(alternatingSuitesTimer, &QTimer::timeout, this, &JoyTabWidget::alternatingSuitesTimeout);
 
     verticalLayout = new QVBoxLayout(this);
     verticalLayout->setContentsMargins(4, 4, 4, 4);
@@ -445,6 +461,12 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     quickSetPushButton->setObjectName(QString::fromUtf8("quickSetPushButton"));
     horizontalLayout_3->addWidget(quickSetPushButton);
 
+    alternatingSuitesButton = new QPushButton(tr("Alternate Sets"), this);
+    alternatingSuitesButton->setObjectName(QString::fromUtf8("alternatingSuitesButton"));
+    alternatingSuitesButton->setToolTip(
+        tr("Alternate two existing button assignment sets without running them at the same time."));
+    horizontalLayout_3->addWidget(alternatingSuitesButton);
+
     QSpacerItem *horizontalSpacer_2 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     horizontalLayout_3->addItem(horizontalSpacer_2);
@@ -504,8 +526,10 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     connect(gameControllerMappingPushButton, &QPushButton::clicked, this, &JoyTabWidget::openGameControllerMappingWindow);
 
     connect(quickSetPushButton, &QPushButton::clicked, this, &JoyTabWidget::showQuickSetDialog);
+    connect(alternatingSuitesButton, &QPushButton::clicked, this, &JoyTabWidget::showAlternatingSuitesDialog);
     connect(this, &JoyTabWidget::joystickConfigChanged, this, &JoyTabWidget::refreshSetButtons);
     connect(this, &JoyTabWidget::joystickConfigChanged, this, &JoyTabWidget::refreshCopySetActions);
+    connect(this, &JoyTabWidget::joystickConfigChanged, this, [this]() { setAlternatingSuiteRunning(false); });
     connect(joystick, &InputDevice::profileUpdated, this, &JoyTabWidget::displayProfileEditNotification);
 
     connect(joystick, &InputDevice::requestProfileLoad, this, &JoyTabWidget::loadConfigFile, Qt::QueuedConnection);
@@ -1237,6 +1261,9 @@ QString JoyTabWidget::getConfigName(int index) { return configBox->itemText(inde
 // Switch widget to currently selected Set
 void JoyTabWidget::changeCurrentSet(int index)
 {
+    if (alternatingSuitesActive)
+        setAlternatingSuiteRunning(false);
+
     int currentPage = stackedWidget_2->currentIndex();
     QPushButton *oldSetButton = nullptr;
     QPushButton *activeSetButton = nullptr;
@@ -1386,6 +1413,235 @@ void JoyTabWidget::showQuickSetDialog()
     ButtonEditDialog *dialog = new ButtonEditDialog(m_joystick, isKeypadUnlocked(), this);
     connect(dialog, &ButtonEditDialog::finished, this, &JoyTabWidget::refreshButtons);
     dialog->show();
+}
+
+QList<QPair<QString, JoyButton *>> JoyTabWidget::alternatingSuiteButtons() const
+{
+    QList<QPair<QString, JoyButton *>> result;
+    SetJoystick *set = m_joystick->getActiveSetJoystick();
+    if (set == nullptr)
+        return result;
+
+    QList<int> buttonIndexes = set->getButtons().keys();
+    std::sort(buttonIndexes.begin(), buttonIndexes.end());
+    for (int index : buttonIndexes)
+    {
+        JoyButton *button = set->getJoyButton(index);
+        if (button != nullptr && !button->getAssignedSlots()->isEmpty())
+            result.append(qMakePair(QString("button/%1").arg(index), button));
+    }
+
+    QList<int> axisIndexes = set->getAxes()->keys();
+    std::sort(axisIndexes.begin(), axisIndexes.end());
+    for (int index : axisIndexes)
+    {
+        JoyAxis *axis = set->getJoyAxis(index);
+        if (axis == nullptr)
+            continue;
+
+        JoyButton *negative = axis->getNAxisButton();
+        JoyButton *positive = axis->getPAxisButton();
+        if (negative != nullptr && !negative->getAssignedSlots()->isEmpty())
+            result.append(qMakePair(QString("axis/%1/negative").arg(index), negative));
+        if (positive != nullptr && !positive->getAssignedSlots()->isEmpty())
+            result.append(qMakePair(QString("axis/%1/positive").arg(index), positive));
+    }
+
+    return result;
+}
+
+JoyButton *JoyTabWidget::resolveAlternatingSuiteButton(const QString &id) const
+{
+    const auto buttons = alternatingSuiteButtons();
+    for (const auto &entry : buttons)
+    {
+        if (entry.first == id)
+            return entry.second;
+    }
+    return nullptr;
+}
+
+QString JoyTabWidget::alternatingSettingsGroup() const
+{
+    QString deviceId = m_joystick->getUniqueIDString();
+    deviceId.replace('/', '_');
+    deviceId.replace('\\', '_');
+    return QString("AlternatingSuites/%1/Set%2").arg(deviceId).arg(m_joystick->getActiveSetNumber() + 1);
+}
+
+int JoyTabWidget::alternatingSuiteInterval(bool first) const
+{
+    const int minimum = first ? alternatingFirstMinimum : alternatingSecondMinimum;
+    const int maximum = first ? alternatingFirstMaximum : alternatingSecondMaximum;
+    const int low = qMax(100, qMin(minimum, maximum));
+    const int high = qMax(low, qMax(minimum, maximum));
+    return QRandomGenerator::global()->bounded(low, high + 1);
+}
+
+void JoyTabWidget::setAlternatingSuiteRunning(bool running)
+{
+    JoyButton *first = resolveAlternatingSuiteButton(alternatingFirstButtonId);
+    JoyButton *second = resolveAlternatingSuiteButton(alternatingSecondButtonId);
+
+    if (!running || first == nullptr || second == nullptr || first == second)
+    {
+        alternatingSuitesTimer->stop();
+        if (first != nullptr)
+            QMetaObject::invokeMethod(first, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+        if (second != nullptr && second != first)
+            QMetaObject::invokeMethod(second, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+        alternatingSuitesActive = false;
+        alternatingFirstIsActive = false;
+        alternatingSuitesButton->setText(tr("Alternate Sets"));
+        return;
+    }
+
+    QMetaObject::invokeMethod(first, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+    QMetaObject::invokeMethod(second, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+    QMetaObject::invokeMethod(first, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, true));
+    alternatingSuitesActive = true;
+    alternatingFirstIsActive = true;
+    alternatingSuitesButton->setText(tr("Alternate Sets: Running"));
+    alternatingSuitesTimer->start(alternatingSuiteInterval(true));
+}
+
+void JoyTabWidget::switchAlternatingSuite()
+{
+    if (!alternatingSuitesActive)
+        return;
+
+    JoyButton *first = resolveAlternatingSuiteButton(alternatingFirstButtonId);
+    JoyButton *second = resolveAlternatingSuiteButton(alternatingSecondButtonId);
+    if (first == nullptr || second == nullptr || first == second)
+    {
+        setAlternatingSuiteRunning(false);
+        return;
+    }
+
+    JoyButton *outgoing = alternatingFirstIsActive ? first : second;
+    JoyButton *incoming = alternatingFirstIsActive ? second : first;
+    QMetaObject::invokeMethod(outgoing, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+    QMetaObject::invokeMethod(incoming, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, true));
+    alternatingFirstIsActive = !alternatingFirstIsActive;
+    alternatingSuitesTimer->start(alternatingSuiteInterval(alternatingFirstIsActive));
+}
+
+void JoyTabWidget::alternatingSuitesTimeout() { switchAlternatingSuite(); }
+
+void JoyTabWidget::showAlternatingSuitesDialog()
+{
+    const auto buttons = alternatingSuiteButtons();
+    if (buttons.size() < 2)
+    {
+        QMessageBox::warning(this, tr("Alternate Sets"),
+                             tr("Configure assignments on at least two controller buttons before using this feature."));
+        return;
+    }
+
+    const QString group = alternatingSettingsGroup();
+    m_settings->getLock()->lock();
+    m_settings->beginGroup(group);
+    alternatingFirstButtonId = m_settings->value("FirstButton", buttons.at(0).first).toString();
+    alternatingSecondButtonId = m_settings->value("SecondButton", buttons.at(1).first).toString();
+    alternatingFirstMinimum = m_settings->value("FirstMinimum", 20000).toInt();
+    alternatingFirstMaximum = m_settings->value("FirstMaximum", 20000).toInt();
+    alternatingSecondMinimum = m_settings->value("SecondMinimum", 15000).toInt();
+    alternatingSecondMaximum = m_settings->value("SecondMaximum", 15000).toInt();
+    m_settings->endGroup();
+    m_settings->getLock()->unlock();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Alternate Assignment Sets"));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+    QLabel *help = new QLabel(
+        tr("Select two existing controller-button assignment sets. Only one set runs at a time; each duration is chosen "
+           "again when that set starts."),
+        &dialog);
+    help->setWordWrap(true);
+    layout->addWidget(help);
+
+    QComboBox *firstCombo = new QComboBox(&dialog);
+    QComboBox *secondCombo = new QComboBox(&dialog);
+    for (const auto &entry : buttons)
+    {
+        QString label = entry.second->getPartialName(true, true);
+        const QString summary = entry.second->getSlotsSummary();
+        if (!summary.isEmpty())
+            label.append(" — ").append(summary);
+        firstCombo->addItem(label, entry.first);
+        secondCombo->addItem(label, entry.first);
+    }
+    firstCombo->setCurrentIndex(qMax(0, firstCombo->findData(alternatingFirstButtonId)));
+    secondCombo->setCurrentIndex(qMax(0, secondCombo->findData(alternatingSecondButtonId)));
+
+    auto makeSecondsBox = [&dialog](int milliseconds) {
+        QDoubleSpinBox *box = new QDoubleSpinBox(&dialog);
+        box->setRange(0.1, 600.0);
+        box->setDecimals(1);
+        box->setSingleStep(0.5);
+        box->setSuffix(QObject::tr(" sec"));
+        box->setValue(milliseconds / 1000.0);
+        return box;
+    };
+
+    QDoubleSpinBox *firstMinimum = makeSecondsBox(alternatingFirstMinimum);
+    QDoubleSpinBox *firstMaximum = makeSecondsBox(alternatingFirstMaximum);
+    QDoubleSpinBox *secondMinimum = makeSecondsBox(alternatingSecondMinimum);
+    QDoubleSpinBox *secondMaximum = makeSecondsBox(alternatingSecondMaximum);
+
+    QFormLayout *form = new QFormLayout();
+    form->addRow(tr("Assignment set 1:"), firstCombo);
+    form->addRow(tr("Set 1 minimum:"), firstMinimum);
+    form->addRow(tr("Set 1 maximum:"), firstMaximum);
+    form->addRow(tr("Assignment set 2:"), secondCombo);
+    form->addRow(tr("Set 2 minimum:"), secondMinimum);
+    form->addRow(tr("Set 2 maximum:"), secondMaximum);
+    layout->addLayout(form);
+
+    QCheckBox *runNow = new QCheckBox(tr("Run alternating assignment sets"), &dialog);
+    runNow->setChecked(alternatingSuitesActive);
+    layout->addWidget(runNow);
+
+    QDialogButtonBox *buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonsBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttonsBox);
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    if (firstCombo->currentData().toString() == secondCombo->currentData().toString())
+    {
+        QMessageBox::warning(this, tr("Alternate Sets"), tr("Choose two different assignment sets."));
+        return;
+    }
+
+    setAlternatingSuiteRunning(false);
+    alternatingFirstButtonId = firstCombo->currentData().toString();
+    alternatingSecondButtonId = secondCombo->currentData().toString();
+    alternatingFirstMinimum = qRound(firstMinimum->value() * 1000.0);
+    alternatingFirstMaximum = qRound(firstMaximum->value() * 1000.0);
+    alternatingSecondMinimum = qRound(secondMinimum->value() * 1000.0);
+    alternatingSecondMaximum = qRound(secondMaximum->value() * 1000.0);
+
+    if (alternatingFirstMinimum > alternatingFirstMaximum)
+        std::swap(alternatingFirstMinimum, alternatingFirstMaximum);
+    if (alternatingSecondMinimum > alternatingSecondMaximum)
+        std::swap(alternatingSecondMinimum, alternatingSecondMaximum);
+
+    m_settings->getLock()->lock();
+    m_settings->beginGroup(group);
+    m_settings->setValue("FirstButton", alternatingFirstButtonId);
+    m_settings->setValue("SecondButton", alternatingSecondButtonId);
+    m_settings->setValue("FirstMinimum", alternatingFirstMinimum);
+    m_settings->setValue("FirstMaximum", alternatingFirstMaximum);
+    m_settings->setValue("SecondMinimum", alternatingSecondMinimum);
+    m_settings->setValue("SecondMaximum", alternatingSecondMaximum);
+    m_settings->endGroup();
+    m_settings->sync();
+    m_settings->getLock()->unlock();
+
+    setAlternatingSuiteRunning(runNow->isChecked());
 }
 
 void JoyTabWidget::showKeyDelayDialog()

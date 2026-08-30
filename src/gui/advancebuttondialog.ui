@@ -919,29 +919,6 @@
             </widget>
            </item>
            <item>
-            <widget class="QCheckBox" name="alternatingToggleCheckBox">
-             <property name="enabled">
-              <bool>false</bool>
-             </property>
-             <property name="toolTip">
-              <string>Tap assigned keyboard or mouse-button slots one at a time. A Delay after each action controls when the next action is triggered; random Delay ranges are supported.</string>
-             </property>
-             <property name="text">
-              <string>Alternate assigned inputs</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="alternatingToggleHelpLabel">
-             <property name="text">
-              <string>Order slots as: Key 1 → Delay 1 → Key 2 → Delay 2. The sequence repeats without overlapping keys.</string>
-             </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-           <item>
             <widget class="QCheckBox" name="randomToggleRepeatCheckBox">
              <property name="enabled">
               <bool>false</bool>
