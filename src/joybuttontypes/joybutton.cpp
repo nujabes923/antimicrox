@@ -250,9 +250,11 @@ void JoyButton::joyEvent(bool pressed, bool ignoresets)
                 {
                     startSequenceOfPressActive(true, tr("Processing turbo for #%1 - %2"));
                     turboEvent();
-                } else if (!isButtonPressed && !activePress && turboTimer.isActive())
+                } else if (!isButtonPressed && !activePress &&
+                           (turboTimer.isActive() || turboWaitingForDelay || isKeyPressed))
                 {
                     turboTimer.stop();
+                    turboWaitingForDelay = false;
 
                     Q_ASSERT(!m_parentSet.isNull());
                     qDebug() << tr("Finishing turbo for button #%1 - %2")
@@ -260,7 +262,7 @@ void JoyButton::joyEvent(bool pressed, bool ignoresets)
                                     .arg(getPartialName());
 
                     if (isKeyPressed)
-                        turboEvent();
+                        changeTurboParams(isKeyPressed, isButtonPressed);
                     else
                         lastDistance = getMouseDistanceFromDeadZone();
                 }
@@ -419,21 +421,6 @@ int JoyButton::getRandomTurboMaximum() { return randomTurboMaximum; }
 
 void JoyButton::turboEvent()
 {
-    // A Delay slot is allowed in a turbo assignment. Do not let the turbo
-    // release phase interrupt that delay, otherwise slots after the delay are
-    // never reached. Once the delay finishes, keep the completed part of the
-    // sequence pressed for the normal turbo press duration before releasing it.
-    if (isKeyPressed && (currentDelay != nullptr) && turboTimer.isActive())
-    {
-        const int remainingDelay = qMax(0, currentDelayDuration - static_cast<int>(buttonDelay.elapsed()));
-        const int cycleInterval =
-            (m_useRandomTurbo && currentTurboMode == NormalTurbo) ? tempTurboInterval : turboInterval;
-        const int pressDuration = qMax(1, cycleInterval / 2);
-
-        turboTimer.start(remainingDelay + pressDuration);
-        return;
-    }
-
     changeTurboParams(isKeyPressed, isButtonPressed);
 }
 
@@ -478,8 +465,19 @@ void JoyButton::changeTurboParams(bool _isKeyPressed, bool isButtonPressed)
             }
         }
 
-        if (turboTimer.interval() != tempInterval)
-            turboTimer.start(tempInterval);
+        if (isKeyPressed && (currentDelay != nullptr))
+        {
+            // A Delay slot owns the timing until the sequence reaches the
+            // slots after it. Starting the release timer here could release
+            // the assignment before those slots (for example Q) are pressed.
+            turboWaitingForDelay = true;
+            turboTimer.stop();
+        } else
+        {
+            turboWaitingForDelay = false;
+            if (turboTimer.interval() != tempInterval)
+                turboTimer.start(tempInterval);
+        }
     }
 }
 
@@ -2840,6 +2838,14 @@ void JoyButton::delayEvent()
             delayTimer.stop();
             buttonDelay.restart();
             createDeskEvent();
+
+            if (turboWaitingForDelay && m_useTurbo && isKeyPressed && isButtonPressed && (currentDelay == nullptr))
+            {
+                const int cycleInterval =
+                    (m_useRandomTurbo && currentTurboMode == NormalTurbo) ? tempTurboInterval : turboInterval;
+                turboWaitingForDelay = false;
+                turboTimer.start(qMax(1, cycleInterval / 2));
+            }
         } else if (currentlyPressed)
         {
             // Elapsed time has not occurred
@@ -2866,6 +2872,9 @@ void JoyButton::releaseDeskEvent(bool skipsetchange)
     createDeskTimer.stop();
     keyPressTimer.stop();
     delayTimer.stop();
+    currentDelay = nullptr;
+    currentDelayDuration = 0;
+    turboWaitingForDelay = false;
     setChangeTimer.stop();
     releaseActiveSlots();
 

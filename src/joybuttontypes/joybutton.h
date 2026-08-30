@@ -454,6 +454,7 @@ class JoyButton : public QObject
         currentKeyPress = nullptr;
         currentDelay = nullptr;
         currentDelayDuration = 0;
+        turboWaitingForDelay = false;
         if (currentChangedSlot)
             currentSetChangeSlot = nullptr;
 
@@ -568,6 +569,7 @@ class JoyButton : public QObject
     bool toggleActiveState;
     bool m_useTurbo;
     bool m_useRandomTurbo;
+    bool turboWaitingForDelay;
     bool lastUnlessInList;
     bool m_ignoresets;
     bool ignoreEvents; // JoyButtonEvents class
