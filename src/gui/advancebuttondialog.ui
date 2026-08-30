@@ -829,6 +829,81 @@
              </property>
             </widget>
            </item>
+           <item>
+            <widget class="QCheckBox" name="randomToggleRepeatCheckBox">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
+             <property name="toolTip">
+              <string>While toggle is active, repeatedly press and release the assigned input using a new interval for every cycle.</string>
+             </property>
+             <property name="text">
+              <string>Random repeat interval</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="randomToggleRepeatRangeLayout">
+             <item>
+              <widget class="QLabel" name="randomToggleRepeatMinimumLabel">
+               <property name="text">
+                <string>Minimum:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QSpinBox" name="randomToggleRepeatMinimumSpinBox">
+               <property name="enabled">
+                <bool>false</bool>
+               </property>
+               <property name="suffix">
+                <string> ms</string>
+               </property>
+               <property name="minimum">
+                <number>20</number>
+               </property>
+               <property name="maximum">
+                <number>4000</number>
+               </property>
+               <property name="singleStep">
+                <number>10</number>
+               </property>
+               <property name="value">
+                <number>100</number>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="randomToggleRepeatMaximumLabel">
+               <property name="text">
+                <string>Maximum:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QSpinBox" name="randomToggleRepeatMaximumSpinBox">
+               <property name="enabled">
+                <bool>false</bool>
+               </property>
+               <property name="suffix">
+                <string> ms</string>
+               </property>
+               <property name="minimum">
+                <number>20</number>
+               </property>
+               <property name="maximum">
+                <number>4000</number>
+               </property>
+               <property name="singleStep">
+                <number>10</number>
+               </property>
+               <property name="value">
+                <number>100</number>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
           </layout>
          </item>
          <item>
