@@ -175,6 +175,15 @@ void JoyButtonSlotXml::readEachSlot(QXmlStreamReader *xml, JoyButtonSlot *joyBtn
         {
             QString temptext = xml->readElementText();
             extraStringData = temptext;
+        } else if ((xml->name().toString() == "randomdelay") && xml->isStartElement())
+        {
+            joyBtnSlot->setUseRandomDelay(xml->readElementText() == "true");
+        } else if ((xml->name().toString() == "randomdelayminimum") && xml->isStartElement())
+        {
+            joyBtnSlot->setRandomDelayMinimum(xml->readElementText().toInt());
+        } else if ((xml->name().toString() == "randomdelaymaximum") && xml->isStartElement())
+        {
+            joyBtnSlot->setRandomDelayMaximum(xml->readElementText().toInt());
         } else if ((xml->name().toString() == "mode") && xml->isStartElement())
         {
             QString temptext = xml->readElementText();
@@ -385,6 +394,13 @@ void JoyButtonSlotXml::writeEachSlot(QXmlStreamWriter *xml, JoyButtonSlot *joyBt
     } else
     {
         xml->writeTextElement("code", QString::number(joyBtnSlot->getSlotCode()));
+    }
+
+    if ((joyBtnSlot->getSlotMode() == JoyButtonSlot::JoyDelay) && joyBtnSlot->isUsingRandomDelay())
+    {
+        xml->writeTextElement("randomdelay", "true");
+        xml->writeTextElement("randomdelayminimum", QString::number(joyBtnSlot->getRandomDelayMinimum()));
+        xml->writeTextElement("randomdelaymaximum", QString::number(joyBtnSlot->getRandomDelayMaximum()));
     }
 
     qDebug() << "write mode for " << joyBtnSlot->getSlotString();

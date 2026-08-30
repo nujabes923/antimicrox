@@ -423,9 +423,9 @@ void JoyButton::turboEvent()
     // release phase interrupt that delay, otherwise slots after the delay are
     // never reached. Once the delay finishes, keep the completed part of the
     // sequence pressed for the normal turbo press duration before releasing it.
-    if (isKeyPressed && (currentDelay != nullptr))
+    if (isKeyPressed && (currentDelay != nullptr) && turboTimer.isActive())
     {
-        const int remainingDelay = qMax(0, currentDelay->getSlotCode() - static_cast<int>(buttonDelay.elapsed()));
+        const int remainingDelay = qMax(0, currentDelayDuration - static_cast<int>(buttonDelay.elapsed()));
         const int cycleInterval =
             (m_useRandomTurbo && currentTurboMode == NormalTurbo) ? tempTurboInterval : turboInterval;
         const int pressDuration = qMax(1, cycleInterval / 2);
@@ -904,6 +904,15 @@ void JoyButton::addEachSlotToActives(JoyButtonSlot *slot, int &i, bool &delaySeq
         qDebug() << i << ": It's a JoyDelay with code: " << tempcode << " and name: " << slot->getSlotString();
 
         currentDelay = slot;
+        if (slot->isUsingRandomDelay())
+        {
+            const int minimum = qMax(10, qMin(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
+            const int maximum = qMax(minimum, qMax(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
+            currentDelayDuration = QRandomGenerator::global()->bounded(minimum, maximum + 1);
+        } else
+        {
+            currentDelayDuration = slot->getSlotCode();
+        }
         buttonDelay.restart();
         delayTimer.start(0);
         exit = true;
@@ -2823,21 +2832,23 @@ void JoyButton::delayEvent()
         if (!isButtonPressedQueue.isEmpty())
             currentlyPressed = isButtonPressedQueue.last();
 
-        if ((currentDelay != nullptr) && (buttonDelay.elapsed() > currentDelay->getSlotCode()))
+        if ((currentDelay != nullptr) && (buttonDelay.elapsed() > currentDelayDuration))
         {
             // Delay time has elapsed. Continue processing slots.
             currentDelay = nullptr;
+            currentDelayDuration = 0;
             delayTimer.stop();
             buttonDelay.restart();
             createDeskEvent();
         } else if (currentlyPressed)
         {
             // Elapsed time has not occurred
-            startTimerOverrun(currentDelay->getSlotCode(), &buttonDelay, &delayTimer);
+            startTimerOverrun(currentDelayDuration, &buttonDelay, &delayTimer);
         } else
         {
             // Pre-emptive release
             currentDelay = nullptr;
+            currentDelayDuration = 0;
             delayTimer.stop();
         }
     } else

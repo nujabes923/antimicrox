@@ -453,6 +453,7 @@ class JoyButton : public QObject
         currentWheelHorizontalEvent = nullptr;
         currentKeyPress = nullptr;
         currentDelay = nullptr;
+        currentDelayDuration = 0;
         if (currentChangedSlot)
             currentSetChangeSlot = nullptr;
 
@@ -637,6 +638,7 @@ class JoyButton : public QObject
     JoyButtonSlot *currentRelease;
     JoyButtonSlot *currentKeyPress;
     JoyButtonSlot *currentDelay;
+    int currentDelayDuration;
     JoyButtonSlot *currentSetChangeSlot;
 
     QElapsedTimer buttonHold;

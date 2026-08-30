@@ -39,6 +39,7 @@
 #include <QListWidgetItem>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -168,6 +169,13 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
             break;
         }
 
+        if (buttonslot->getSlotMode() == JoyButtonSlot::JoyDelay)
+        {
+            existingCode->getValue()->setUseRandomDelay(buttonslot->isUsingRandomDelay());
+            existingCode->getValue()->setRandomDelayMinimum(buttonslot->getRandomDelayMinimum());
+            existingCode->getValue()->setRandomDelayMaximum(buttonslot->getRandomDelayMaximum());
+        }
+
         QListWidgetItem *item = new QListWidgetItem(ui->slotListWidget);
         item->setData(Qt::UserRole, QVariant::fromValue<SimpleKeyGrabberButton *>(existingCode));
         QHBoxLayout *layout = new QHBoxLayout();
@@ -285,6 +293,24 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
             &AdvanceButtonDialog::changeSlotTypeDisplay);
     connect(ui->slotTypeComboBox, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
             &AdvanceButtonDialog::changeSlotHelpText);
+
+    connect(ui->randomDelayCheckBox, &QCheckBox::toggled, this, [this](bool enabled) {
+        ui->randomDelayMinimumSpinBox->setEnabled(enabled);
+        ui->randomDelayMaximumSpinBox->setEnabled(enabled);
+        updateRandomDelaySlot();
+    });
+    connect(ui->randomDelayMinimumSpinBox, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+            [this](int value) {
+                if (value > ui->randomDelayMaximumSpinBox->value())
+                    ui->randomDelayMaximumSpinBox->setValue(value);
+                updateRandomDelaySlot();
+            });
+    connect(ui->randomDelayMaximumSpinBox, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+            [this](int value) {
+                if (value < ui->randomDelayMinimumSpinBox->value())
+                    ui->randomDelayMinimumSpinBox->setValue(value);
+                updateRandomDelaySlot();
+            });
 
     connect(ui->actionHundredthsComboBox, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
             &AdvanceButtonDialog::updateActionTimeLabel);
@@ -797,8 +823,20 @@ void AdvanceButtonDialog::insertKindOfSlot(QListWidgetItem *item, int slotProper
     {
         tempbutton->setValue(actionTime, inputAction);
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, actionTime),
-                                  Q_ARG(int, 0), Q_ARG(int, index), Q_ARG(JoyButtonSlot::JoySlotInputAction, inputAction));
+        if (inputAction == JoyButtonSlot::JoyDelay)
+        {
+            JoyButtonSlot *delaySlot = tempbutton->getValue();
+            delaySlot->setUseRandomDelay(ui->randomDelayCheckBox->isChecked());
+            delaySlot->setRandomDelayMinimum(ui->randomDelayMinimumSpinBox->value());
+            delaySlot->setRandomDelayMaximum(ui->randomDelayMaximumSpinBox->value());
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+                                      Q_ARG(JoyButtonSlot *, delaySlot), Q_ARG(int, index));
+        } else
+        {
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, actionTime),
+                                      Q_ARG(int, 0), Q_ARG(int, index),
+                                      Q_ARG(JoyButtonSlot::JoySlotInputAction, inputAction));
+        }
 
         updateSlotsScrollArea(actionTime);
     }
@@ -1143,6 +1181,20 @@ void AdvanceButtonDialog::performStatsWidgetRefresh(QListWidgetItem *item)
         ui->slotTypeComboBox->setCurrentIndex(2);
 
         refreshTimeComboBoxes(slot);
+
+        const QSignalBlocker randomDelayBlocker(ui->randomDelayCheckBox);
+        const QSignalBlocker minimumBlocker(ui->randomDelayMinimumSpinBox);
+        const QSignalBlocker maximumBlocker(ui->randomDelayMaximumSpinBox);
+        const int suggestedMinimum = qMax(10, ((slot->getSlotCode() * 8 / 10) / 10) * 10);
+        const int suggestedMaximum = qMax(suggestedMinimum, ((slot->getSlotCode() * 12 / 10 + 9) / 10) * 10);
+
+        ui->randomDelayCheckBox->setChecked(slot->isUsingRandomDelay());
+        ui->randomDelayMinimumSpinBox->setValue(slot->getRandomDelayMinimum() > 0 ? slot->getRandomDelayMinimum()
+                                                                                 : suggestedMinimum);
+        ui->randomDelayMaximumSpinBox->setValue(slot->getRandomDelayMaximum() > 0 ? slot->getRandomDelayMaximum()
+                                                                                 : suggestedMaximum);
+        ui->randomDelayMinimumSpinBox->setEnabled(slot->isUsingRandomDelay());
+        ui->randomDelayMaximumSpinBox->setEnabled(slot->isUsingRandomDelay());
     } else if (slot->getSlotMode() == JoyButtonSlot::JoyDistance)
     {
         ui->slotTypeComboBox->setCurrentIndex(3);
@@ -1222,15 +1274,52 @@ void AdvanceButtonDialog::checkSlotTimeUpdate()
     {
         if (actionTime > 0)
         {
-            button->setValue(actionTime, buttonSlot->getSlotMode());
+            const JoyButtonSlot::JoySlotInputAction slotMode = buttonSlot->getSlotMode();
+            const bool useRandomDelay = buttonSlot->isUsingRandomDelay();
+            const int randomDelayMinimum = buttonSlot->getRandomDelayMinimum();
+            const int randomDelayMaximum = buttonSlot->getRandomDelayMaximum();
+            button->setValue(actionTime, slotMode);
 
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, actionTime),
-                                      Q_ARG(int, 0), Q_ARG(int, index),
-                                      Q_ARG(JoyButtonSlot::JoySlotInputAction, buttonSlot->getSlotMode()));
+            if (slotMode == JoyButtonSlot::JoyDelay)
+            {
+                JoyButtonSlot *delaySlot = button->getValue();
+                delaySlot->setUseRandomDelay(useRandomDelay);
+                delaySlot->setRandomDelayMinimum(randomDelayMinimum);
+                delaySlot->setRandomDelayMaximum(randomDelayMaximum);
+                QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+                                          Q_ARG(JoyButtonSlot *, delaySlot), Q_ARG(int, index));
+            } else
+            {
+                QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+                                          Q_ARG(int, actionTime), Q_ARG(int, 0), Q_ARG(int, index),
+                                          Q_ARG(JoyButtonSlot::JoySlotInputAction, slotMode));
+            }
 
             updateSlotsScrollArea(actionTime);
         }
     }
+}
+
+void AdvanceButtonDialog::updateRandomDelaySlot()
+{
+    QListWidgetItem *item = ui->slotListWidget->currentItem();
+    if (item == nullptr)
+        return;
+
+    SimpleKeyGrabberButton *button = item->data(Qt::UserRole).value<SimpleKeyGrabberButton *>();
+    JoyButtonSlot *slot = button->getValue();
+    if (slot->getSlotMode() != JoyButtonSlot::JoyDelay)
+        return;
+
+    slot->setUseRandomDelay(ui->randomDelayCheckBox->isChecked());
+    slot->setRandomDelayMinimum(ui->randomDelayMinimumSpinBox->value());
+    slot->setRandomDelayMaximum(ui->randomDelayMaximumSpinBox->value());
+    button->refreshButtonLabel();
+
+    const int index = ui->slotListWidget->row(item);
+    QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(JoyButtonSlot *, slot),
+                              Q_ARG(int, index));
+    updateSlotsScrollArea(slot->getSlotCode());
 }
 
 void AdvanceButtonDialog::checkSlotMouseModUpdate()
@@ -1606,6 +1695,8 @@ void AdvanceButtonDialog::showFindExecutableWindow(bool)
 
 void AdvanceButtonDialog::changeSlotTypeDisplay(int index)
 {
+    ui->randomDelayControlsWidget->setVisible(index == DelaySlot);
+
     switch (index)
     {
     case 0:

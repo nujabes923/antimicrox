@@ -116,6 +116,13 @@ class JoyButtonSlot : public QObject
     void setExtraData(QVariant data);
     QVariant getExtraData() const;
 
+    bool isUsingRandomDelay() const;
+    int getRandomDelayMinimum() const;
+    int getRandomDelayMaximum() const;
+    void setUseRandomDelay(bool enabled);
+    void setRandomDelayMinimum(int interval);
+    void setRandomDelayMaximum(int interval);
+
     void setMixSlots(QList<JoyButtonSlot *> *slots);
     QList<JoyButtonSlot *> *getMixSlots();
 
@@ -148,6 +155,9 @@ class JoyButtonSlot : public QObject
     bool easingActive;
     QString m_textData;
     QVariant extraData;
+    bool m_useRandomDelay;
+    int randomDelayMinimum;
+    int randomDelayMaximum;
 };
 
 Q_DECLARE_METATYPE(JoyButtonSlot *)

@@ -548,9 +548,98 @@
                 </layout>
                </item>
               </layout>
-             </item>
-            </layout>
-           </widget>
+              </item>
+              <item>
+               <widget class="QWidget" name="randomDelayControlsWidget" native="true">
+                <property name="visible">
+                 <bool>false</bool>
+                </property>
+                <layout class="QHBoxLayout" name="randomDelayControlsLayout">
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QCheckBox" name="randomDelayCheckBox">
+                   <property name="toolTip">
+                    <string>Choose a new delay from the range every time this delay slot runs.</string>
+                   </property>
+                   <property name="text">
+                    <string>Random delay</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="randomDelayMinimumLabel">
+                   <property name="text">
+                    <string>Minimum:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QSpinBox" name="randomDelayMinimumSpinBox">
+                   <property name="enabled">
+                    <bool>false</bool>
+                   </property>
+                   <property name="suffix">
+                    <string> ms</string>
+                   </property>
+                   <property name="minimum">
+                    <number>10</number>
+                   </property>
+                   <property name="maximum">
+                    <number>60000</number>
+                   </property>
+                   <property name="singleStep">
+                    <number>10</number>
+                   </property>
+                   <property name="value">
+                    <number>150</number>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="randomDelayMaximumLabel">
+                   <property name="text">
+                    <string>Maximum:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QSpinBox" name="randomDelayMaximumSpinBox">
+                   <property name="enabled">
+                    <bool>false</bool>
+                   </property>
+                   <property name="suffix">
+                    <string> ms</string>
+                   </property>
+                   <property name="minimum">
+                    <number>10</number>
+                   </property>
+                   <property name="maximum">
+                    <number>60000</number>
+                   </property>
+                   <property name="singleStep">
+                    <number>10</number>
+                   </property>
+                   <property name="value">
+                    <number>250</number>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
            <widget class="QWidget" name="mouseModPage">
             <layout class="QVBoxLayout" name="verticalLayout_11">
              <item>

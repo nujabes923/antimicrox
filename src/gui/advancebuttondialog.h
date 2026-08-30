@@ -95,6 +95,7 @@ class AdvanceButtonDialog : public QDialog
     void performStatsWidgetRefresh(QListWidgetItem *item);
 
     void checkSlotTimeUpdate();      // AdvanceBtnDlgAssign class
+    void updateRandomDelaySlot();
     void checkSlotMouseModUpdate();  // AdvanceBtnDlgAssign class
     void checkSlotDistanceUpdate();  // AdvanceBtnDlgAssign class
     void checkSlotSetChangeUpdate(); // AdvanceBtnDlgAssign class

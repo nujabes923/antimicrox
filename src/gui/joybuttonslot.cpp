@@ -37,6 +37,9 @@ JoyButtonSlot::JoyButtonSlot(QObject *parent)
     previousDistance = 0.0;
     easingActive = false;
     mix_slots = nullptr;
+    m_useRandomDelay = false;
+    randomDelayMinimum = 0;
+    randomDelayMaximum = 0;
 }
 
 JoyButtonSlot::JoyButtonSlot(int code, JoySlotInputAction mode, QObject *parent)
@@ -74,6 +77,9 @@ JoyButtonSlot::JoyButtonSlot(QString text, JoySlotInputAction mode, QObject *par
     m_distance = 0.0;
     easingActive = false;
     mix_slots = nullptr;
+    m_useRandomDelay = false;
+    randomDelayMinimum = 0;
+    randomDelayMaximum = 0;
 
     if ((mode == JoyLoadProfile) || (mode == JoyTextEntry) || (mode == JoyExecute))
     {
@@ -272,15 +278,25 @@ QString JoyButtonSlot::getSlotString()
             break;
         }
         case JoyDelay: {
-            int minutes = deviceCode / 1000 / 60;
-            int seconds = (deviceCode / 1000 % 60);
-            int hundredths = deviceCode % 1000 / 10;
             QString temp(tr("Delay").append(" "));
 
-            if (minutes > 0)
-                temp.append(QString("%1:").arg(minutes, 2, 10, QChar('0')));
+            const auto formatDelay = [](int milliseconds) {
+                const int minutes = milliseconds / 1000 / 60;
+                const int seconds = milliseconds / 1000 % 60;
+                const int hundredths = milliseconds % 1000 / 10;
+                QString value;
+                if (minutes > 0)
+                    value.append(QString("%1:").arg(minutes, 2, 10, QChar('0')));
+                value.append(QString("%1.%2").arg(seconds, 2, 10, QChar('0')).arg(hundredths, 2, 10, QChar('0')));
+                return value;
+            };
 
-            temp.append(QString("%1.%2").arg(seconds, 2, 10, QChar('0')).arg(hundredths, 2, 10, QChar('0')));
+            if (m_useRandomDelay)
+                temp.append(formatDelay(qMin(randomDelayMinimum, randomDelayMaximum)))
+                    .append("-")
+                    .append(formatDelay(qMax(randomDelayMinimum, randomDelayMaximum)));
+            else
+                temp.append(formatDelay(deviceCode));
 
             newlabel.append(temp);
 
@@ -393,6 +409,18 @@ void JoyButtonSlot::setExtraData(QVariant data) { this->extraData = data; }
 
 QVariant JoyButtonSlot::getExtraData() const { return extraData; }
 
+bool JoyButtonSlot::isUsingRandomDelay() const { return m_useRandomDelay; }
+
+int JoyButtonSlot::getRandomDelayMinimum() const { return randomDelayMinimum; }
+
+int JoyButtonSlot::getRandomDelayMaximum() const { return randomDelayMaximum; }
+
+void JoyButtonSlot::setUseRandomDelay(bool enabled) { m_useRandomDelay = enabled; }
+
+void JoyButtonSlot::setRandomDelayMinimum(int interval) { randomDelayMinimum = qMax(0, interval); }
+
+void JoyButtonSlot::setRandomDelayMaximum(int interval) { randomDelayMaximum = qMax(0, interval); }
+
 /**
  * @brief Deep-copies member variables from another JoyButtonSlot object
  *   into this object.
@@ -424,6 +452,9 @@ void JoyButtonSlot::copyAssignments(const JoyButtonSlot &slot)
         m_textData = slot.getTextData();
 
     extraData = slot.extraData;
+    m_useRandomDelay = slot.m_useRandomDelay;
+    randomDelayMinimum = slot.randomDelayMinimum;
+    randomDelayMaximum = slot.randomDelayMaximum;
 }
 
 void JoyButtonSlot::secureMixSlotsInit()
