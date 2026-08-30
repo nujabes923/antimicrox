@@ -907,6 +907,7 @@ void JoyButton::addEachSlotToActives(JoyButtonSlot *slot, int &i, bool &delaySeq
             const int minimum = qMax(10, qMin(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
             const int maximum = qMax(minimum, qMax(slot->getRandomDelayMinimum(), slot->getRandomDelayMaximum()));
             currentDelayDuration = QRandomGenerator::global()->bounded(minimum, maximum + 1);
+            qDebug() << "Selected random delay:" << currentDelayDuration << "ms for" << getPartialName();
         } else
         {
             currentDelayDuration = slot->getSlotCode();
@@ -2762,6 +2763,12 @@ void JoyButton::holdEvent()
         if (!isButtonPressedQueue.isEmpty())
             currentlyPressed = isButtonPressedQueue.last();
 
+        // Axis-backed triggers can briefly report their physical release
+        // while the logical Toggle state is still active. The delayed part of
+        // the sequence must follow the logical state or it will be cancelled
+        // before the slots after the delay (such as Q) are reached.
+        currentlyPressed = currentlyPressed || (m_toggle && toggleActiveState);
+
         // Activate hold event
         if (currentlyPressed && (buttonHold.elapsed() > currentHold->getSlotCode()))
         {
@@ -2830,6 +2837,11 @@ void JoyButton::delayEvent()
         if (!isButtonPressedQueue.isEmpty())
             currentlyPressed = isButtonPressedQueue.last();
 
+        // A toggled axis-backed trigger can be physically released while its
+        // logical state remains active. Keep processing the delayed sequence
+        // so slots after the delay are not discarded.
+        currentlyPressed = currentlyPressed || (m_toggle && toggleActiveState);
+
         if ((currentDelay != nullptr) && (buttonDelay.elapsed() > currentDelayDuration))
         {
             // Delay time has elapsed. Continue processing slots.
@@ -2839,12 +2851,14 @@ void JoyButton::delayEvent()
             buttonDelay.restart();
             createDeskEvent();
 
-            if (turboWaitingForDelay && m_useTurbo && isKeyPressed && isButtonPressed && (currentDelay == nullptr))
+            if (turboWaitingForDelay && m_useTurbo && isKeyPressed && currentlyPressed && (currentDelay == nullptr))
             {
                 const int cycleInterval =
                     (m_useRandomTurbo && currentTurboMode == NormalTurbo) ? tempTurboInterval : turboInterval;
                 turboWaitingForDelay = false;
                 turboTimer.start(qMax(1, cycleInterval / 2));
+                qDebug() << "Delay sequence completed; resumed turbo after activating remaining slots for"
+                         << getPartialName();
             }
         } else if (currentlyPressed)
         {
