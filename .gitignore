@@ -6,6 +6,8 @@ build-dir/
 build-*/
 Build/
 dist/
+.deps/
+aqtinstall.log
 .flatpak-builder/
 repo/
 docs/

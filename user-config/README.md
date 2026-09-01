@@ -4,6 +4,7 @@ This directory contains the local configuration used with the random-turbo build
 
 - `antimicrox_settings.ini`: application and controller profile selection settings.
 - `mxdJoystick.gamecontroller.amgp`: Xbox 360 Controller mappings.
+- `maple-max.gamecontroller.amgp`: Maple Max Xbox Series X Controller mappings.
 
 The current profile snapshot includes the latest button sequences, toggle mappings,
 and random turbo settings. Button 11 toggles `Q` with a newly sampled 120–200 ms
