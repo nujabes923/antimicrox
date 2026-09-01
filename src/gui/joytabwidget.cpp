@@ -1429,14 +1429,15 @@ QList<QPair<QString, JoyButton *>> JoyTabWidget::alternatingSuiteButtons() const
     if (set == nullptr)
         return result;
 
+    auto appendAssignedButton = [&result](const QString &id, JoyButton *button) {
+        if (button != nullptr && !button->getAssignedSlots()->isEmpty())
+            result.append(qMakePair(id, button));
+    };
+
     QList<int> buttonIndexes = set->getButtons().keys();
     std::sort(buttonIndexes.begin(), buttonIndexes.end());
     for (int index : buttonIndexes)
-    {
-        JoyButton *button = set->getJoyButton(index);
-        if (button != nullptr && !button->getAssignedSlots()->isEmpty())
-            result.append(qMakePair(QString("button/%1").arg(index), button));
-    }
+        appendAssignedButton(QString("button/%1").arg(index), set->getJoyButton(index));
 
     QList<int> axisIndexes = set->getAxes()->keys();
     std::sort(axisIndexes.begin(), axisIndexes.end());
@@ -1448,10 +1449,74 @@ QList<QPair<QString, JoyButton *>> JoyTabWidget::alternatingSuiteButtons() const
 
         JoyButton *negative = axis->getNAxisButton();
         JoyButton *positive = axis->getPAxisButton();
-        if (negative != nullptr && !negative->getAssignedSlots()->isEmpty())
-            result.append(qMakePair(QString("axis/%1/negative").arg(index), negative));
-        if (positive != nullptr && !positive->getAssignedSlots()->isEmpty())
-            result.append(qMakePair(QString("axis/%1/positive").arg(index), positive));
+        appendAssignedButton(QString("axis/%1/negative").arg(index), negative);
+        appendAssignedButton(QString("axis/%1/positive").arg(index), positive);
+    }
+
+    QList<int> stickIndexes = set->getSticks().keys();
+    std::sort(stickIndexes.begin(), stickIndexes.end());
+    for (int index : stickIndexes)
+    {
+        JoyControlStick *stick = set->getJoyStick(index);
+        if (stick == nullptr)
+            continue;
+
+        QList<JoyControlStick::JoyStickDirections> directions = stick->getButtons()->keys();
+        std::sort(directions.begin(), directions.end());
+        for (JoyControlStick::JoyStickDirections direction : directions)
+        {
+            appendAssignedButton(QString("stick/%1/%2").arg(index).arg(static_cast<int>(direction)),
+                                 stick->getDirectionButton(direction));
+        }
+    }
+
+    QList<int> dpadIndexes = set->getHats().keys();
+    std::sort(dpadIndexes.begin(), dpadIndexes.end());
+    for (int index : dpadIndexes)
+    {
+        JoyDPad *dpad = set->getJoyDPad(index);
+        if (dpad == nullptr)
+            continue;
+
+        QList<int> directions = dpad->getButtons()->keys();
+        std::sort(directions.begin(), directions.end());
+        for (int direction : directions)
+        {
+            appendAssignedButton(QString("dpad/%1/%2").arg(index).arg(direction), dpad->getJoyButton(direction));
+        }
+    }
+
+    QList<int> vdpadIndexes = set->getVdpads().keys();
+    std::sort(vdpadIndexes.begin(), vdpadIndexes.end());
+    for (int index : vdpadIndexes)
+    {
+        VDPad *dpad = set->getVDPad(index);
+        if (dpad == nullptr)
+            continue;
+
+        QList<int> directions = dpad->getButtons()->keys();
+        std::sort(directions.begin(), directions.end());
+        for (int direction : directions)
+        {
+            appendAssignedButton(QString("vdpad/%1/%2").arg(index).arg(direction), dpad->getJoyButton(direction));
+        }
+    }
+
+    QList<JoySensorType> sensorTypes = set->getSensors().keys();
+    std::sort(sensorTypes.begin(), sensorTypes.end());
+    for (JoySensorType type : sensorTypes)
+    {
+        JoySensor *sensor = set->getSensor(type);
+        if (sensor == nullptr)
+            continue;
+
+        QList<JoySensorDirection> directions = sensor->getButtons()->keys();
+        std::sort(directions.begin(), directions.end());
+        for (JoySensorDirection direction : directions)
+        {
+            appendAssignedButton(QString("sensor/%1/%2").arg(static_cast<int>(type)).arg(static_cast<int>(direction)),
+                                 sensor->getDirectionButton(direction));
+        }
     }
 
     return result;
@@ -1623,7 +1688,7 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     if (buttons.size() < 2)
     {
         QMessageBox::warning(this, tr("Alternate Sets"),
-                             tr("Configure assignments on at least two controller buttons before using this feature."));
+                             tr("Configure assignments on at least two controller inputs before using this feature."));
         return;
     }
 
@@ -1632,8 +1697,8 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     dialog.setWindowTitle(tr("Alternate Assignment Sets"));
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
     QLabel *help = new QLabel(
-        tr("Choose two or three existing assignment sets. They run in order and never overlap; each duration is "
-           "randomly selected again whenever that set starts."),
+        tr("Choose two or three existing assignment sets from buttons, axes, sticks, D-pads, or sensors. They run in "
+           "order and never overlap; each duration is randomly selected again whenever that set starts."),
         &dialog);
     help->setWordWrap(true);
     layout->addWidget(help);

@@ -730,10 +730,15 @@ if(WIN32)
         "${CMAKE_CURRENT_BINARY_DIR}/bin/Qt${QT_VERSION_MAJOR}Network.dll"
         "${CMAKE_CURRENT_BINARY_DIR}/bin/Qt${QT_VERSION_MAJOR}Widgets.dll"
         "${SDL2_DLL_LOCATION_DIR}/SDL2.dll"
-        "${GCC_DLL}/libgcc_s_seh-1.dll"
-        "${PTHREAD_DLL_DIR}/libwinpthread-1.dll"
-        "${LIBCPP_DLL_DIR}/libstdc++-6.dll"
         )
+
+    if(MINGW)
+        list(APPEND DLL_FILES
+            "${GCC_DLL}/libgcc_s_seh-1.dll"
+            "${PTHREAD_DLL_DIR}/libwinpthread-1.dll"
+            "${LIBCPP_DLL_DIR}/libstdc++-6.dll"
+            )
+    endif(MINGW)
 
     if(QT_VERSION_MAJOR EQUAL 5)
         list(APPEND DLL_FILES
