@@ -719,6 +719,16 @@ if(WIN32)
 
     find_path(SDL2_DLL_LOCATION_DIR "SDL2.dll" HINTS "${SDL2_LIBRARY_DIRS}/../bin")
 
+    if(SDL2_DLL_LOCATION_DIR)
+        add_custom_command(TARGET antimicrox POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${SDL2_DLL_LOCATION_DIR}/SDL2.dll"
+                "$<TARGET_FILE_DIR:antimicrox>/SDL2.dll"
+        )
+    else()
+        message(WARNING "SDL2.dll was not found; the build-tree executable will not be runnable.")
+    endif()
+
     #these three lines assume SDL2 in standard location TODO do it better
     find_path(GCC_DLL "libgcc_s_seh-1.dll" HINTS "${SDL2_LIBRARY_DIRS}/../bin")
     find_path(PTHREAD_DLL_DIR "libwinpthread-1.dll" HINTS "${SDL2_LIBRARY_DIRS}/../bin")
@@ -776,6 +786,12 @@ if(WIN32)
     # Required platform plugin
     get_target_property(QtCore_LOCATION Qt${QT_VERSION_MAJOR}::Core LOCATION)
     get_filename_component(QT_DLL_DIR ${QtCore_LOCATION} PATH)
+    add_custom_command(TARGET antimicrox POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:antimicrox>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_DLL_DIR}/../plugins/platforms/qwindows.dll"
+            "$<TARGET_FILE_DIR:antimicrox>/platforms/qwindows.dll"
+    )
     install(FILES
         ${QT_DLL_DIR}/../plugins/platforms/qwindows.dll
         DESTINATION ./bin/platforms/)

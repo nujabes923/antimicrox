@@ -29,6 +29,7 @@
 #include "common.h"
 #include "dpadpushbutton.h"
 #include "gamecontrollermappingdialog.h"
+#include "gamecontroller/gamecontroller.h"
 #include "inputdevice.h"
 #include "joyaxiswidget.h"
 #include "joybuttonwidget.h"
@@ -88,6 +89,8 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
                        AntiMicroSettings *settings, bool graphical, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , m_joysticks(joysticks)
+    , m_offlineJoystick(nullptr)
     , trayIcon(nullptr)
     , trayIconMenu(nullptr)
 {
@@ -123,8 +126,6 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
 
     signalDisconnect = false;
     showTrayIcon = !cmdutility->isTrayHidden() && graphical && !cmdutility->shouldListControllers();
-
-    m_joysticks = joysticks;
 
     if (showTrayIcon)
     {
@@ -218,6 +219,12 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
         connect(timer, &QTimer::timeout, [this]() { this->checkEachTenMinutesBattery(m_joysticks); });
         timer->start(CHECK_BATTERIES_MSEC);
     }
+
+    // Do not leave the initial "No Joysticks" page visible while the SDL
+    // worker starts. The regular refresh path will replace this tab if a
+    // physical controller is discovered.
+    if (m_graphical && m_joysticks->isEmpty())
+        addOfflineJoystickTab();
 }
 
 MainWindow::~MainWindow()
@@ -230,7 +237,75 @@ MainWindow::~MainWindow()
     installEventFilter(trayIconMenu);
     installEventFilter(trayIcon);
 
+    delete m_offlineJoystick;
+    m_offlineJoystick = nullptr;
+
     delete ui;
+}
+
+void MainWindow::addOfflineJoystickTab()
+{
+    if (!m_graphical)
+        return;
+
+    if (m_offlineJoystick == nullptr)
+    {
+        GameController *offlineController = new GameController(nullptr, 0, m_settings, 0, this);
+
+        QString rememberedControllerID;
+        m_settings->getLock()->lock();
+        m_settings->beginGroup("Controllers");
+        const QStringList keys = m_settings->allKeys();
+        for (const QString &key : keys)
+        {
+            static const QString prefix = QStringLiteral("Controller");
+            static const QString suffix = QStringLiteral("LastSelected");
+            if (key.startsWith(prefix) && key.endsWith(suffix) && !m_settings->value(key).toString().isEmpty())
+            {
+                rememberedControllerID = key.mid(prefix.size(), key.size() - prefix.size() - suffix.size());
+                break;
+            }
+        }
+        m_settings->endGroup();
+        m_settings->getLock()->unlock();
+
+        offlineController->setOfflineUniqueID(rememberedControllerID);
+        m_offlineJoystick = offlineController;
+    }
+
+    JoyTabWidget *tabwidget = new JoyTabWidget(m_offlineJoystick, m_settings, this);
+    ui->tabWidget->addTab(tabwidget, tr("Offline Gamepad"));
+    tabwidget->refreshButtons();
+
+    connect(tabwidget, &JoyTabWidget::namesDisplayChanged, this,
+            [this, tabwidget](bool displayNames) { propogateNameDisplayStatus(tabwidget, displayNames); });
+    connect(tabwidget, &JoyTabWidget::mappingUpdated, this, &MainWindow::propogateMappingUpdate);
+    if (showTrayIcon)
+        connect(tabwidget, &JoyTabWidget::joystickConfigChanged, this, &MainWindow::populateTrayIcon);
+
+    tabwidget->loadDeviceSettings();
+    ui->tabWidget->setCurrentIndex(0);
+    ui->stackedWidget->setCurrentIndex(1);
+    qInfo() << "Offline gamepad tab is active";
+}
+
+void MainWindow::removeOfflineJoystick()
+{
+    if (m_offlineJoystick == nullptr)
+        return;
+
+    for (int i = ui->tabWidget->count() - 1; i >= 0; --i)
+    {
+        JoyTabWidget *tab = qobject_cast<JoyTabWidget *>(ui->tabWidget->widget(i));
+        if (tab != nullptr && tab->getJoystick() == m_offlineJoystick)
+        {
+            tab->saveDeviceSettings();
+            delete tab;
+        }
+    }
+
+    delete m_offlineJoystick;
+    m_offlineJoystick = nullptr;
 }
 
 void MainWindow::alterConfigFromSettings()
@@ -334,7 +409,10 @@ void MainWindow::makeJoystickTabs()
         ui->tabWidget->addTab(tabwidget, joytabName);
     }
 
-    if (m_joysticks != nullptr)
+    if (m_joysticks->isEmpty())
+        addOfflineJoystickTab();
+
+    if (!m_joysticks->isEmpty())
     {
         ui->tabWidget->setCurrentIndex(0);
         ui->stackedWidget->setCurrentIndex(1);
@@ -352,6 +430,8 @@ void MainWindow::fillButtonsMap(QMap<SDL_JoystickID, InputDevice *> *joysticks)
 {
     ui->stackedWidget->setCurrentIndex(0);
     removeJoyTabs();
+    if (!joysticks->isEmpty())
+        removeOfflineJoystick();
 
     // Make temporary QMap with devices inserted using the device index as the
     // key rather than joystick ID.
@@ -391,7 +471,10 @@ void MainWindow::fillButtonsMap(QMap<SDL_JoystickID, InputDevice *> *joysticks)
         }
     }
 
-    if (joysticks->size() > 0)
+    if (joysticks->isEmpty())
+        addOfflineJoystickTab();
+
+    if (!joysticks->isEmpty())
     {
         loadAppConfig();
 
@@ -701,7 +784,7 @@ void MainWindow::mainMenuChange(QMenu *tempMenu)
 
 void MainWindow::saveAppConfig()
 {
-    if (m_joysticks->size() > 0)
+    if (ui->tabWidget->count() > 0)
     {
         qInfo() << "Started saving app config";
         JoyTabWidget *temptabwidget = qobject_cast<JoyTabWidget *>(ui->tabWidget->widget(0)); // static_cast
@@ -1499,12 +1582,14 @@ void MainWindow::removeJoyTab(SDL_JoystickID deviceID)
 
     if (ui->tabWidget->count() == 0)
     {
-        ui->stackedWidget->setCurrentIndex(0);
+        addOfflineJoystickTab();
     }
 }
 
 void MainWindow::addJoyTab(InputDevice *device)
 {
+    removeOfflineJoystick();
+
     JoyTabWidget *tabwidget = new JoyTabWidget(device, m_settings, this);
     QString joytabName = device->getSDLName();
     joytabName.append(" ").append(tr("(%1)").arg(device->getName()));

@@ -57,6 +57,7 @@ class JoyTabWidget : public QWidget
 
   public:
     explicit JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, QWidget *parent = nullptr);
+    ~JoyTabWidget() override;
 
     void saveSettings();                          // JoyTabSettings class
     void loadSettings(bool forceRefresh = false); // JoyTabSettings class
@@ -122,6 +123,7 @@ class JoyTabWidget : public QWidget
     void showQuickSetDialog();
     void showKeyDelayDialog();
     void showAlternatingSuitesDialog();
+    void showAlternatingSuitesPopup();
     void toggleAlternatingSuites();
     void alternatingSuitesTimeout();
     void showSetNamesDialog(); // JoyTabWidgetSets class
@@ -172,6 +174,7 @@ class JoyTabWidget : public QWidget
     QPushButton *delayButton;
     QPushButton *alternatingSuitesButton;
     QPushButton *alternatingSuitesStartButton;
+    QPushButton *alternatingSuitesPopupButton;
     QComboBox *configBox;
     QGridLayout *gridLayout;
     QGridLayout *gridLayout2;
@@ -244,6 +247,10 @@ class JoyTabWidget : public QWidget
     bool alternatingSuitesActive = false;
     int alternatingActiveSuiteIndex = -1;
     QTimer *alternatingSuitesTimer;
+    QWidget *alternatingSuitesPopup = nullptr;
+    QLabel *alternatingSuitesPopupStatus = nullptr;
+    QPushButton *alternatingSuitesPopupStartButton = nullptr;
+    QPushButton *alternatingSuitesPopupStopButton = nullptr;
 
     QList<QPair<QString, JoyButton *>> alternatingSuiteButtons() const;
     JoyButton *resolveAlternatingSuiteButton(const QString &id) const;
@@ -253,6 +260,7 @@ class JoyTabWidget : public QWidget
     QString alternatingSettingsGroup() const;
     QStringList configuredAlternatingSuiteIds() const;
     void loadAlternatingSuiteSettings();
+    void updateAlternatingSuitesPopup();
 
     JoyTabWidgetHelper tabHelper;
 

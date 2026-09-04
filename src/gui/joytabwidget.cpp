@@ -61,6 +61,7 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -71,14 +72,21 @@
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSet>
 #include <QSpacerItem>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWidget>
 
 bool JoyTabWidget::changedNotSaved = false;
+
+static Qt::ConnectionType helperCallType(const QObject *helper)
+{
+    return helper->thread() == QThread::currentThread() ? Qt::DirectConnection : Qt::BlockingQueuedConnection;
+}
 
 JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, QWidget *parent)
     : QWidget(parent)
@@ -87,6 +95,7 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     , tabHelper(joystick)
 {
     tabHelper.moveToThread(joystick->thread());
+    connect(joystick, &QObject::destroyed, this, [this]() { m_joystick = nullptr; });
 
     alternatingSuitesTimer = new QTimer(this);
     alternatingSuitesTimer->setSingleShot(true);
@@ -473,6 +482,12 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     alternatingSuitesStartButton->setToolTip(tr("Start or stop the configured assignment-set rotation."));
     horizontalLayout_3->addWidget(alternatingSuitesStartButton);
 
+    alternatingSuitesPopupButton = new QPushButton(tr("Pop Up Controls"), this);
+    alternatingSuitesPopupButton->setObjectName(QString::fromUtf8("alternatingSuitesPopupButton"));
+    alternatingSuitesPopupButton->setToolTip(
+        tr("Show always-on-top Start and Stop buttons for use while a game is open."));
+    horizontalLayout_3->addWidget(alternatingSuitesPopupButton);
+
     QSpacerItem *horizontalSpacer_2 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     horizontalLayout_3->addItem(horizontalSpacer_2);
@@ -534,6 +549,7 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     connect(quickSetPushButton, &QPushButton::clicked, this, &JoyTabWidget::showQuickSetDialog);
     connect(alternatingSuitesButton, &QPushButton::clicked, this, &JoyTabWidget::showAlternatingSuitesDialog);
     connect(alternatingSuitesStartButton, &QPushButton::clicked, this, &JoyTabWidget::toggleAlternatingSuites);
+    connect(alternatingSuitesPopupButton, &QPushButton::clicked, this, &JoyTabWidget::showAlternatingSuitesPopup);
     connect(this, &JoyTabWidget::joystickConfigChanged, this, &JoyTabWidget::refreshSetButtons);
     connect(this, &JoyTabWidget::joystickConfigChanged, this, &JoyTabWidget::refreshCopySetActions);
     connect(this, &JoyTabWidget::joystickConfigChanged, this, [this]() { setAlternatingSuiteRunning(false); });
@@ -543,6 +559,19 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
 
     reconnectCheckUnsavedEvent();
     reconnectMainComboBoxEvents();
+}
+
+JoyTabWidget::~JoyTabWidget()
+{
+    if (m_joystick != nullptr)
+        setAlternatingSuiteRunning(false);
+    if (alternatingSuitesPopup != nullptr)
+    {
+        if (m_settings != nullptr)
+            m_settings->setValue("AlternatePopup/Geometry", alternatingSuitesPopup->saveGeometry());
+        delete alternatingSuitesPopup;
+        alternatingSuitesPopup = nullptr;
+    }
 }
 
 bool JoyTabWidget::isKeypadUnlocked()
@@ -691,7 +720,7 @@ void JoyTabWidget::saveConfigFile()
     {
         QFileInfo fileinfo(filename);
 
-        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", helperCallType(&tabHelper),
                                   Q_ARG(QString, fileinfo.absoluteFilePath()));
         XMLConfigWriter *writer = tabHelper.getWriter();
 
@@ -768,7 +797,7 @@ void JoyTabWidget::resetJoystick()
         {
             removeCurrentButtons();
 
-            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", Qt::BlockingQueuedConnection);
+            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
 
             fillButtons();
             refreshSetButtons();
@@ -813,7 +842,7 @@ void JoyTabWidget::resetJoystick()
 
             removeCurrentButtons();
 
-            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", Qt::BlockingQueuedConnection);
+            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
 
             fillButtons();
             refreshSetButtons();
@@ -866,7 +895,7 @@ void JoyTabWidget::saveAsConfig()
         }
         fileinfo.setFile(filename);
 
-        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", helperCallType(&tabHelper),
                                   Q_ARG(QString, fileinfo.absoluteFilePath()));
         XMLConfigWriter *writer = tabHelper.getWriter();
 
@@ -941,12 +970,14 @@ void JoyTabWidget::changeJoyConfig(int index)
         removeCurrentButtons();
         emit forceTabUnflash(this);
 
-        qDebug() << "SDL Current Power Level: " << SDL_JoystickCurrentPowerLevel(m_joystick->getJoyHandle()) << "\n";
+        SDL_Joystick *joyHandle = m_joystick->getJoyHandle();
+        const SDL_JoystickPowerLevel powerLevel =
+            joyHandle != nullptr ? SDL_JoystickCurrentPowerLevel(joyHandle) : SDL_JOYSTICK_POWER_UNKNOWN;
+        qDebug() << "SDL Current Power Level: " << powerLevel << "\n";
 
-        if (SDL_JoystickCurrentPowerLevel(m_joystick->getJoyHandle()) == SDL_JOYSTICK_POWER_WIRED ||
-            SDL_JoystickCurrentPowerLevel(m_joystick->getJoyHandle()) == SDL_JOYSTICK_POWER_UNKNOWN)
+        if (powerLevel == SDL_JOYSTICK_POWER_WIRED || powerLevel == SDL_JOYSTICK_POWER_UNKNOWN)
         {
-            QMetaObject::invokeMethod(&tabHelper, "readConfigFile", Qt::BlockingQueuedConnection, Q_ARG(QString, filename));
+            QMetaObject::invokeMethod(&tabHelper, "readConfigFile", helperCallType(&tabHelper), Q_ARG(QString, filename));
         } else
         {
             tabHelper.readConfigFile(filename);
@@ -988,7 +1019,7 @@ void JoyTabWidget::changeJoyConfig(int index)
         removeCurrentButtons();
         emit forceTabUnflash(this);
 
-        QMetaObject::invokeMethod(&tabHelper, "reInitDevice", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
 
         fillButtons();
         refreshSetButtons();
@@ -1619,6 +1650,7 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
         alternatingActiveSuiteIndex = -1;
         alternatingSuitesStartButton->setChecked(false);
         alternatingSuitesStartButton->setText(tr("Start Alternating"));
+        updateAlternatingSuitesPopup();
         return;
     }
 
@@ -1630,6 +1662,7 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     alternatingSuitesStartButton->setChecked(true);
     alternatingSuitesStartButton->setText(tr("Stop Alternating"));
     alternatingSuitesTimer->start(alternatingSuiteInterval(0));
+    updateAlternatingSuitesPopup();
 }
 
 void JoyTabWidget::switchAlternatingSuite()
@@ -1661,6 +1694,7 @@ void JoyTabWidget::switchAlternatingSuite()
     QMetaObject::invokeMethod(outgoing, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
     QMetaObject::invokeMethod(incoming, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, true));
     alternatingSuitesTimer->start(alternatingSuiteInterval(alternatingActiveSuiteIndex));
+    updateAlternatingSuitesPopup();
 }
 
 void JoyTabWidget::alternatingSuitesTimeout() { switchAlternatingSuite(); }
@@ -1680,6 +1714,77 @@ void JoyTabWidget::toggleAlternatingSuites()
         QMessageBox::warning(this, tr("Alternate Sets"),
                              tr("Configure at least two different assignment sets before starting the rotation."));
     }
+}
+
+void JoyTabWidget::showAlternatingSuitesPopup()
+{
+    if (alternatingSuitesPopup == nullptr)
+    {
+        alternatingSuitesPopup = new QWidget(nullptr, Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
+        alternatingSuitesPopup->setObjectName(QString::fromUtf8("alternatingSuitesPopup"));
+        alternatingSuitesPopup->setWindowTitle(tr("Alternate Controls"));
+        alternatingSuitesPopup->setAttribute(Qt::WA_ShowWithoutActivating);
+
+        QVBoxLayout *layout = new QVBoxLayout(alternatingSuitesPopup);
+        layout->setContentsMargins(8, 8, 8, 8);
+        alternatingSuitesPopupStatus = new QLabel(alternatingSuitesPopup);
+        alternatingSuitesPopupStatus->setAlignment(Qt::AlignCenter);
+        layout->addWidget(alternatingSuitesPopupStatus);
+
+        QHBoxLayout *buttonLayout = new QHBoxLayout();
+        alternatingSuitesPopupStartButton = new QPushButton(tr("Start"), alternatingSuitesPopup);
+        alternatingSuitesPopupStartButton->setMinimumSize(90, 44);
+        alternatingSuitesPopupStopButton = new QPushButton(tr("Stop"), alternatingSuitesPopup);
+        alternatingSuitesPopupStopButton->setMinimumSize(90, 44);
+        buttonLayout->addWidget(alternatingSuitesPopupStartButton);
+        buttonLayout->addWidget(alternatingSuitesPopupStopButton);
+        layout->addLayout(buttonLayout);
+
+        connect(alternatingSuitesPopupStartButton, &QPushButton::clicked, this, [this]() {
+            if (!alternatingSuitesActive)
+                toggleAlternatingSuites();
+        });
+        connect(alternatingSuitesPopupStopButton, &QPushButton::clicked, this, [this]() {
+            if (alternatingSuitesActive)
+                setAlternatingSuiteRunning(false);
+        });
+
+        const QByteArray savedGeometry =
+            m_settings != nullptr ? m_settings->value("AlternatePopup/Geometry").toByteArray() : QByteArray();
+        if (!savedGeometry.isEmpty())
+        {
+            alternatingSuitesPopup->restoreGeometry(savedGeometry);
+        } else
+        {
+            alternatingSuitesPopup->adjustSize();
+            QScreen *screen = QGuiApplication::primaryScreen();
+            if (screen != nullptr)
+            {
+                const QRect available = screen->availableGeometry();
+                alternatingSuitesPopup->move(available.right() - alternatingSuitesPopup->width() - 20,
+                                             available.top() + 20);
+            }
+        }
+    }
+
+    updateAlternatingSuitesPopup();
+    alternatingSuitesPopup->show();
+    alternatingSuitesPopup->raise();
+}
+
+void JoyTabWidget::updateAlternatingSuitesPopup()
+{
+    if (alternatingSuitesPopup == nullptr)
+        return;
+
+    alternatingSuitesPopup->setWindowTitle(tr("Alternate Controls"));
+    alternatingSuitesPopupStartButton->setText(tr("Start"));
+    alternatingSuitesPopupStopButton->setText(tr("Stop"));
+    alternatingSuitesPopupStartButton->setEnabled(!alternatingSuitesActive);
+    alternatingSuitesPopupStopButton->setEnabled(alternatingSuitesActive);
+    alternatingSuitesPopupStatus->setText(alternatingSuitesActive
+                                              ? tr("Running — assignment set %1").arg(alternatingActiveSuiteIndex + 1)
+                                              : tr("Stopped"));
 }
 
 void JoyTabWidget::showAlternatingSuitesDialog()
@@ -2011,6 +2116,10 @@ void JoyTabWidget::retranslateUi()
     gameControllerMappingPushButton->setText(tr("Controller Mapping"));
     stickAssignPushButton->setText(tr("Stick/Pad Assign"));
     quickSetPushButton->setText(tr("Quick Set"));
+    alternatingSuitesButton->setText(tr("Alternate Setup"));
+    alternatingSuitesStartButton->setText(alternatingSuitesActive ? tr("Stop Alternating") : tr("Start Alternating"));
+    alternatingSuitesPopupButton->setText(tr("Pop Up Controls"));
+    updateAlternatingSuitesPopup();
     resetButton->setText(tr("Reset"));
 
     namesPushButton->setText(tr("Names"));
@@ -2999,7 +3108,9 @@ void JoyTabWidget::convToUniqueIDControllerGroupSett(QSettings *sett, QString gu
 
 void JoyTabWidget::updateBatteryIcon()
 {
-    SDL_JoystickPowerLevel power_level = SDL_JoystickCurrentPowerLevel(m_joystick->getJoyHandle());
+    SDL_Joystick *joyHandle = m_joystick->getJoyHandle();
+    SDL_JoystickPowerLevel power_level =
+        joyHandle != nullptr ? SDL_JoystickCurrentPowerLevel(joyHandle) : SDL_JOYSTICK_POWER_UNKNOWN;
     if (m_old_power_level == power_level)
     {
         return;

@@ -94,6 +94,7 @@ class GameController : public InputDevice
     QHash<int, int> const &getDpadvalues();
 
     SDL_GameController *getController() const;
+    void setOfflineUniqueID(const QString &uniqueID);
     virtual SDL_GameControllerType getControllerType() const override;
 
   protected slots:
@@ -110,6 +111,7 @@ class GameController : public InputDevice
     SDL_JoystickID joystickID;
     SDL_GameController *controller;
     SDL_GameControllerType m_controller_type;
+    QString m_offlineUniqueID;
 
     void enableSensors();
 };

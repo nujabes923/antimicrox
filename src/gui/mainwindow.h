@@ -147,6 +147,9 @@ class MainWindow : public QMainWindow
     void checkAutoProfileWatcherTimer();         // MainConfiguration class
 
   private:
+    void addOfflineJoystickTab();
+    void removeOfflineJoystick();
+
     /**
      * @brief Check state of batteries in controllers and notify user (only when powerLevSDL matches current battery level)
      */
@@ -155,6 +158,7 @@ class MainWindow : public QMainWindow
     Ui::MainWindow *ui;
 
     QMap<SDL_JoystickID, InputDevice *> *m_joysticks;
+    InputDevice *m_offlineJoystick;
     QMap<int, QList<QAction *>> profileActions;
 
     QSystemTrayIcon *trayIcon;

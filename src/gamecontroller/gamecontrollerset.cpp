@@ -50,6 +50,9 @@ void GameControllerSet::reset() { resetSticks(); }
 void GameControllerSet::applyHapticTrigger()
 {
     GameController *controller = qobject_cast<GameController *>(getInputDevice());
+    if (controller == nullptr || controller->getController() == nullptr)
+        return;
+
     HapticTriggerPs5 *left_effect = getJoyAxis(SDL_CONTROLLER_AXIS_TRIGGERLEFT)->getHapticTrigger();
     HapticTriggerPs5 *right_effect = getJoyAxis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT)->getHapticTrigger();
 

@@ -36,15 +36,17 @@
 
 GameController::GameController(SDL_GameController *controller, int deviceIndex, AntiMicroSettings *settings,
                                int counterUniques, QObject *parent)
-    : InputDevice(SDL_GameControllerGetJoystick(controller), deviceIndex, settings, parent)
+    : InputDevice(controller != nullptr ? SDL_GameControllerGetJoystick(controller) : nullptr, deviceIndex, settings,
+                  parent)
 {
     this->controller = controller;
     this->counterUniques = counterUniques;
+    m_offlineUniqueID = QStringLiteral("OfflineGameController");
 
-    SDL_Joystick *joyhandle = SDL_GameControllerGetJoystick(controller);
-    joystickID = SDL_JoystickInstanceID(joyhandle);
+    SDL_Joystick *joyhandle = controller != nullptr ? SDL_GameControllerGetJoystick(controller) : nullptr;
+    joystickID = joyhandle != nullptr ? SDL_JoystickInstanceID(joyhandle) : -1;
 #if SDL_VERSION_ATLEAST(2, 0, 16)
-    m_controller_type = SDL_GameControllerGetType(controller);
+    m_controller_type = controller != nullptr ? SDL_GameControllerGetType(controller) : SDL_CONTROLLER_TYPE_UNKNOWN;
 #else
     m_controller_type = SDL_CONTROLLER_TYPE_UNKNOWN;
 #endif
@@ -61,6 +63,9 @@ GameController::GameController(SDL_GameController *controller, int deviceIndex, 
 
 QString GameController::getName()
 {
+    if (controller == nullptr)
+        return tr("Offline Controller");
+
     return QString(tr("Game Controller")).append(" ").append(QString::number(getRealJoyNumber()));
 }
 
@@ -71,6 +76,9 @@ QString GameController::getSDLName()
     if (controller != nullptr)
     {
         temp = SDL_GameControllerName(controller);
+    } else
+    {
+        temp = tr("Offline Gamepad");
     }
 
     return temp;
@@ -171,6 +179,9 @@ QString GameController::getRawProductVersion() const
 
 QString GameController::getRawUniqueIDString() const
 {
+    if (controller == nullptr)
+        return m_offlineUniqueID;
+
     return (getRawGUIDString() + getRawVendorString() + getRawProductIDString() + getSerialString());
 }
 
@@ -195,6 +206,8 @@ double GameController::getRawSensorRate(JoySensorType type)
 {
     double rate = 0;
 #if SDL_VERSION_ATLEAST(2, 0, 16)
+    if (controller == nullptr)
+        return rate;
     if (type == ACCELEROMETER)
         rate = SDL_GameControllerGetSensorDataRate(controller, SDL_SENSOR_ACCEL);
     else if (type == GYROSCOPE)
@@ -212,6 +225,8 @@ double GameController::getRawSensorRate(JoySensorType type)
 bool GameController::hasRawSensor(JoySensorType type)
 {
 #if SDL_VERSION_ATLEAST(2, 0, 14)
+    if (controller == nullptr)
+        return false;
     if (type == ACCELEROMETER)
         return SDL_GameControllerHasSensor(controller, SDL_SENSOR_ACCEL);
     else if (type == GYROSCOPE)
@@ -227,6 +242,9 @@ void GameController::setCounterUniques(int counter) { counterUniques = counter; 
 QString GameController::getBindStringForAxis(int index, bool)
 {
     QString temp = QString();
+
+    if (controller == nullptr)
+        return temp;
 
     SDL_GameControllerButtonBind bind =
         SDL_GameControllerGetBindForAxis(controller, static_cast<SDL_GameControllerAxis>(index));
@@ -245,6 +263,9 @@ QString GameController::getBindStringForAxis(int index, bool)
 QString GameController::getBindStringForButton(int index, bool trueIndex)
 {
     QString temp = QString();
+
+    if (controller == nullptr)
+        return temp;
 
     SDL_GameControllerButtonBind bind =
         SDL_GameControllerGetBindForButton(controller, static_cast<SDL_GameControllerButton>(index));
@@ -272,11 +293,15 @@ QString GameController::getBindStringForButton(int index, bool trueIndex)
 
 SDL_GameControllerButtonBind GameController::getBindForAxis(int index)
 {
+    if (controller == nullptr)
+        return SDL_GameControllerButtonBind{};
     return SDL_GameControllerGetBindForAxis(controller, static_cast<SDL_GameControllerAxis>(index));
 }
 
 SDL_GameControllerButtonBind GameController::getBindForButton(int index)
 {
+    if (controller == nullptr)
+        return SDL_GameControllerButtonBind{};
     return SDL_GameControllerGetBindForButton(controller, static_cast<SDL_GameControllerButton>(index));
 }
 
@@ -287,6 +312,9 @@ void GameController::buttonReleaseEvent(int) {}
 void GameController::enableSensors()
 {
 #if SDL_VERSION_ATLEAST(2, 0, 14)
+    if (controller == nullptr)
+        return;
+
     if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO))
     {
         SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE);
@@ -379,6 +407,12 @@ QHash<int, int> const &GameController::getAxisvalues() { return axisvalues; }
 QHash<int, int> const &GameController::getDpadvalues() { return dpadvalues; }
 
 SDL_GameController *GameController::getController() const { return controller; }
+
+void GameController::setOfflineUniqueID(const QString &uniqueID)
+{
+    if (controller == nullptr && !uniqueID.isEmpty())
+        m_offlineUniqueID = uniqueID;
+}
 
 /**
  * @brief Returns the current controller model.
