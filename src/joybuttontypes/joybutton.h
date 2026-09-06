@@ -399,6 +399,8 @@ class JoyButton : public QObject
                          JoyButtonSlot::JoySlotInputAction mode = JoyButtonSlot::JoyKeyboard); // JoyButtonSlots class
 
     bool setAssignedSlot(JoyButtonSlot *otherSlot, int index); // JoyButtonSlots class
+    bool updateAssignedDelaySlot(int index, int code, bool useRandomDelay, int randomDelayMinimum,
+                                 int randomDelayMaximum);
 
     bool insertAssignedSlot(int code, int alias, int index,
                             JoyButtonSlot::JoySlotInputAction mode = JoyButtonSlot::JoyKeyboard); // JoyButtonSlots class

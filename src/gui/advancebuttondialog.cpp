@@ -30,6 +30,7 @@
 
 #include <QComboBox>
 #include <QDebug>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -41,6 +42,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
@@ -53,6 +55,10 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
     ui->setupUi(this);
     ui->stackedWidget->setCurrentWidget(ui->page);
     setAttribute(Qt::WA_DeleteOnClose);
+
+    QPushButton *saveButton = ui->buttonBox->addButton(tr("Save"), QDialogButtonBox::ActionRole);
+    saveButton->setToolTip(tr("Apply the current slot values and save this configuration file."));
+    connect(saveButton, &QPushButton::clicked, this, &AdvanceButtonDialog::saveCurrentProfile);
 
     PadderCommon::inputDaemonMutex.lock();
 
@@ -375,6 +381,71 @@ AdvanceButtonDialog::AdvanceButtonDialog(QWidget *parent)
 }
 
 AdvanceButtonDialog::~AdvanceButtonDialog() { delete ui; }
+
+void AdvanceButtonDialog::done(int result)
+{
+    // The editor updates assignments as controls change, but a final combo-box
+    // edit can still be pending when the Close button takes focus. Commit the
+    // values currently displayed before the parent dialog refreshes its copy.
+    commitCurrentSlotEdits();
+    QDialog::done(result);
+}
+
+bool AdvanceButtonDialog::commitCurrentSlotEdits()
+{
+    QListWidgetItem *item = ui->slotListWidget->currentItem();
+    if (item == nullptr)
+        return true;
+
+    SimpleKeyGrabberButton *button = item->data(Qt::UserRole).value<SimpleKeyGrabberButton *>();
+    if (button == nullptr)
+        return false;
+
+    const JoyButtonSlot::JoySlotInputAction mode = button->getValue()->getSlotMode();
+    switch (mode)
+    {
+    case JoyButtonSlot::JoyPause:
+    case JoyButtonSlot::JoyHold:
+    case JoyButtonSlot::JoyRelease:
+    case JoyButtonSlot::JoyKeyPress:
+    case JoyButtonSlot::JoyDelay:
+        checkSlotTimeUpdate();
+        if (mode == JoyButtonSlot::JoyDelay)
+            return commitDelaySlot(button, ui->slotListWidget->row(item));
+        break;
+    default:
+        break;
+    }
+
+    return true;
+}
+
+void AdvanceButtonDialog::saveCurrentProfile()
+{
+    if (!commitCurrentSlotEdits())
+    {
+        QMessageBox::warning(this, tr("Save Configuration"),
+                             tr("The current slot value could not be applied. The configuration was not saved."));
+        return;
+    }
+
+    QWidget *ancestor = parentWidget();
+    JoyTabWidget *tab = nullptr;
+    while (ancestor != nullptr && tab == nullptr)
+    {
+        tab = qobject_cast<JoyTabWidget *>(ancestor);
+        ancestor = ancestor->parentWidget();
+    }
+
+    if (tab == nullptr || !QMetaObject::invokeMethod(tab, "saveConfigFile", Qt::DirectConnection))
+    {
+        QMessageBox::warning(this, tr("Save Configuration"),
+                             tr("Could not find the main controller tab. Use the main window Save button instead."));
+        return;
+    }
+
+    QMessageBox::information(this, tr("Save Configuration"), tr("The current configuration has been saved."));
+}
 
 void AdvanceButtonDialog::changeTurboText(int value)
 {
@@ -829,8 +900,7 @@ void AdvanceButtonDialog::insertKindOfSlot(QListWidgetItem *item, int slotProper
             delaySlot->setUseRandomDelay(ui->randomDelayCheckBox->isChecked());
             delaySlot->setRandomDelayMinimum(ui->randomDelayMinimumSpinBox->value());
             delaySlot->setRandomDelayMaximum(ui->randomDelayMaximumSpinBox->value());
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
-                                      Q_ARG(JoyButtonSlot *, delaySlot), Q_ARG(int, index));
+            commitDelaySlot(tempbutton, index);
         } else
         {
             QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, actionTime),
@@ -1286,8 +1356,7 @@ void AdvanceButtonDialog::checkSlotTimeUpdate()
                 delaySlot->setUseRandomDelay(useRandomDelay);
                 delaySlot->setRandomDelayMinimum(randomDelayMinimum);
                 delaySlot->setRandomDelayMaximum(randomDelayMaximum);
-                QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
-                                          Q_ARG(JoyButtonSlot *, delaySlot), Q_ARG(int, index));
+                commitDelaySlot(button, index);
             } else
             {
                 QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
@@ -1317,9 +1386,36 @@ void AdvanceButtonDialog::updateRandomDelaySlot()
     button->refreshButtonLabel();
 
     const int index = ui->slotListWidget->row(item);
-    QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(JoyButtonSlot *, slot),
-                              Q_ARG(int, index));
+    commitDelaySlot(button, index);
     updateSlotsScrollArea(slot->getSlotCode());
+}
+
+bool AdvanceButtonDialog::commitDelaySlot(SimpleKeyGrabberButton *button, int index)
+{
+    if (button == nullptr || index < 0)
+        return false;
+
+    JoyButtonSlot *slot = button->getValue();
+    if (slot == nullptr || slot->getSlotMode() != JoyButtonSlot::JoyDelay)
+        return false;
+
+    const int code = slot->getSlotCode();
+    const bool useRandomDelay = slot->isUsingRandomDelay();
+    const int randomDelayMinimum = slot->getRandomDelayMinimum();
+    const int randomDelayMaximum = slot->getRandomDelayMaximum();
+
+    bool updated = false;
+    const Qt::ConnectionType connectionType = m_button->thread() == QThread::currentThread()
+                                                  ? Qt::DirectConnection
+                                                  : Qt::BlockingQueuedConnection;
+    const bool invoked = QMetaObject::invokeMethod(
+        m_button,
+        [this, index, code, useRandomDelay, randomDelayMinimum, randomDelayMaximum, &updated]() {
+            updated = m_button->updateAssignedDelaySlot(index, code, useRandomDelay, randomDelayMinimum,
+                                                        randomDelayMaximum);
+        },
+        connectionType);
+    return invoked && updated;
 }
 
 void AdvanceButtonDialog::checkSlotMouseModUpdate()

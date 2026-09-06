@@ -2479,6 +2479,34 @@ bool JoyButton::setAssignedSlot(JoyButtonSlot *otherSlot, int index)
     return permitSlot;
 }
 
+bool JoyButton::updateAssignedDelaySlot(int index, int code, bool useRandomDelay, int randomDelayMinimum,
+                                        int randomDelayMaximum)
+{
+    if (index < 0 || code <= 0)
+        return false;
+
+    eventReset();
+
+    {
+        QWriteLocker locker(&assignmentsLock);
+        if (index >= getAssignmentsLocal().size())
+            return false;
+
+        JoyButtonSlot *slot = getAssignmentsLocal().at(index);
+        if (slot == nullptr || slot->getSlotMode() != JoyButtonSlot::JoyDelay)
+            return false;
+
+        slot->setSlotCode(code);
+        slot->setUseRandomDelay(useRandomDelay);
+        slot->setRandomDelayMinimum(randomDelayMinimum);
+        slot->setRandomDelayMaximum(randomDelayMaximum);
+    }
+
+    buildActiveZoneSummaryString();
+    emit slotsChanged();
+    return true;
+}
+
 QList<JoyButtonSlot *> *JoyButton::getAssignedSlots() { return &assignments; }
 
 QList<JoyButtonSlot *> const &JoyButton::getActiveSlots() { return activeSlots; }

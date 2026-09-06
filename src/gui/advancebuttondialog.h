@@ -46,6 +46,7 @@ class AdvanceButtonDialog : public QDialog
     AdvanceButtonDialogHelper const &getHelper();
 
   protected:
+    void done(int result) override;
     void connectButtonEvents(SimpleKeyGrabberButton *button); // AdvanceBtnDlgAssign class
     void appendBlankKeyGrabber();                             // AdvanceBtnDlgAssign class
     int actionTimeConvert();                                  // AdvanceBtnDlgAssign class
@@ -96,6 +97,7 @@ class AdvanceButtonDialog : public QDialog
 
     void checkSlotTimeUpdate();      // AdvanceBtnDlgAssign class
     void updateRandomDelaySlot();
+    void saveCurrentProfile();
     void checkSlotMouseModUpdate();  // AdvanceBtnDlgAssign class
     void checkSlotDistanceUpdate();  // AdvanceBtnDlgAssign class
     void checkSlotSetChangeUpdate(); // AdvanceBtnDlgAssign class
@@ -137,6 +139,8 @@ class AdvanceButtonDialog : public QDialog
     AdvanceButtonDialogHelper helper;
     QReadWriteLock joinLock;
 
+    bool commitCurrentSlotEdits();
+    bool commitDelaySlot(SimpleKeyGrabberButton *button, int index);
     void insertKindOfSlot(QListWidgetItem *item, int slotProperty,
                           JoyButtonSlot::JoySlotInputAction inputAction); // AdvanceBtnDlgAssign class
 };
