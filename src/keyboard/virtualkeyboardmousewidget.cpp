@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "virtualkeyboardmousewidget.h"
 
 #include "antkeymapper.h"
@@ -894,7 +896,7 @@ void VirtualKeyboardMouseWidget::clearButtonSlots()
     {
         if (ButtonEditDialog::getInstance()->getLastJoyButton() != nullptr)
             QMetaObject::invokeMethod(ButtonEditDialog::getInstance()->getLastJoyButton(), "clearSlotsEventReset",
-                                      Qt::BlockingQueuedConnection);
+                                      synchronousConnectionType(ButtonEditDialog::getInstance()->getLastJoyButton()));
 
         emit selectionCleared();
 
@@ -914,7 +916,7 @@ void VirtualKeyboardMouseWidget::clearButtonSlotsFinish()
     {
         if (ButtonEditDialog::getInstance()->getLastJoyButton() != nullptr)
             QMetaObject::invokeMethod(ButtonEditDialog::getInstance()->getLastJoyButton(), "clearSlotsEventReset",
-                                      Qt::BlockingQueuedConnection);
+                                      synchronousConnectionType(ButtonEditDialog::getInstance()->getLastJoyButton()));
 
         emit selectionFinished();
 

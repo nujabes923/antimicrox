@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "axiseditdialog.h"
 #include "ui_axiseditdialog.h"
 
@@ -203,7 +205,7 @@ void AxisEditDialog::implementAxisPresets(int index)
 
     PadderCommon::lockInputDevices();
     InputDevice *tempDevice = m_axis->getParentSet()->getInputDevice();
-    QMetaObject::invokeMethod(tempDevice, "haltServices", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(tempDevice, "haltServices", synchronousConnectionType(tempDevice));
 
     switch (index)
     {
@@ -275,7 +277,7 @@ void AxisEditDialog::implementAxisPresets(int index)
         JoyAxisButton *pbutton = m_axis->getPAxisButton();
 
         QMetaObject::invokeMethod(nbutton, "clearSlotsEventReset");
-        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", synchronousConnectionType(pbutton));
 
         refreshNButtonLabel();
         refreshPButtonLabel();
@@ -290,7 +292,7 @@ void AxisEditDialog::implementAxisPresets(int index)
         JoyAxisButton *button = m_axis->getNAxisButton();
         QMetaObject::invokeMethod(button, "clearSlotsEventReset", Q_ARG(bool, false));
 
-        QMetaObject::invokeMethod(button, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(button, "setAssignedSlot", synchronousConnectionType(button),
                                   Q_ARG(int, nbuttonslot->getSlotCode()), Q_ARG(int, nbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, nbuttonslot->getSlotMode()));
 
@@ -303,7 +305,7 @@ void AxisEditDialog::implementAxisPresets(int index)
         JoyAxisButton *button = m_axis->getPAxisButton();
         QMetaObject::invokeMethod(button, "clearSlotsEventReset", Q_ARG(bool, false));
 
-        QMetaObject::invokeMethod(button, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(button, "setAssignedSlot", synchronousConnectionType(button),
                                   Q_ARG(int, pbuttonslot->getSlotCode()), Q_ARG(int, pbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, pbuttonslot->getSlotMode()));
 
@@ -550,7 +552,7 @@ void AxisEditDialog::implementTriggerPresets(int index)
         JoyAxisButton *pbutton = m_axis->getPAxisButton();
 
         QMetaObject::invokeMethod(nbutton, "clearSlotsEventReset");
-        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", synchronousConnectionType(pbutton));
 
         refreshNButtonLabel();
         refreshPButtonLabel();
@@ -563,13 +565,13 @@ void AxisEditDialog::implementTriggerPresets(int index)
 
         if (nbutton->getAssignedSlots()->length() > 0)
         {
-            QMetaObject::invokeMethod(nbutton, "clearSlotsEventReset", Qt::BlockingQueuedConnection, Q_ARG(bool, false));
+            QMetaObject::invokeMethod(nbutton, "clearSlotsEventReset", synchronousConnectionType(nbutton), Q_ARG(bool, false));
             refreshNButtonLabel();
         }
 
         QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", Q_ARG(bool, false));
 
-        QMetaObject::invokeMethod(pbutton, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(pbutton, "setAssignedSlot", synchronousConnectionType(pbutton),
                                   Q_ARG(int, pbuttonslot->getSlotCode()), Q_ARG(int, pbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, pbuttonslot->getSlotMode()));
 

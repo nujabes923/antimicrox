@@ -20,6 +20,7 @@
 #include "ui_buttoneditdialog.h"
 
 #include "advancebuttondialog.h"
+#include "actionlibrarydialog.h"
 #include "inputdevice.h"
 #include "joybuttontypes/joybutton.h"
 #include "keyboard/virtualkeyboardmousewidget.h"
@@ -34,6 +35,7 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QThread>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QPointer>
@@ -97,6 +99,19 @@ ButtonEditDialog::ButtonEditDialog(JoyButton *button, InputDevice *joystick, boo
     withoutQuickSetDialog = true;
 
     lastJoyButton = button;
+
+    auto *libraryButton = new QPushButton(tr("Action Library…"), this);
+    libraryButton->setObjectName("assignFromActionLibrary");
+    ui->horizontalLayout->insertWidget(1, libraryButton);
+    connect(libraryButton, &QPushButton::clicked, this, [this]() {
+        releaseKeyboard();
+        QWidget *owner = parentWidget() ? parentWidget()->window() : this;
+        auto *dialog = new ActionLibraryDialog(this->joystick->getSettings(), lastJoyButton, owner);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setWindowModality(Qt::ApplicationModal);
+        connect(dialog, &QDialog::finished, this, &ButtonEditDialog::refreshForLastBtn);
+        dialog->show();
+    });
 
     setupVirtualKeyboardMouseTabWidget();
     refreshForLastBtn();
@@ -608,7 +623,7 @@ void ButtonEditDialog::invokeMethodLastBtn(JoyButton *lastJoyBtn, ButtonEditDial
             // when all exist (code, alias, index)
         } else
         {
-            if (lastJoyBtn->isPartVDPad())
+            if (lastJoyBtn->isPartVDPad() && helper->thread() != QThread::currentThread())
                 connTypeForAll = Qt::BlockingQueuedConnection;
 
             QMetaObject::invokeMethod(helper, invokeString, connTypeForAll, Q_ARG(int, code), Q_ARG(int, alias),

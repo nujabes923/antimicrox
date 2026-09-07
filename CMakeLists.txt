@@ -130,6 +130,8 @@ endif(UNIX)
 set(antimicrox_MAIN src/main.cpp)
 
 set(antimicrox_SOURCES
+        src/actionlibrary.cpp
+        src/gui/actionlibrarydialog.cpp
         src/antimicrosettings.cpp
         src/antkeymapper.cpp
         src/applaunchhelper.cpp
@@ -261,6 +263,8 @@ set(antimicrox_SOURCES
         )
 
 set(antimicrox_HEADERS
+        src/actionlibrary.h
+        src/gui/actionlibrarydialog.h
         src/antimicrosettings.h
         src/antkeymapper.h
         src/applaunchhelper.h

@@ -102,6 +102,8 @@ class JoyTabWidget : public QWidget
     void mappingUpdated(QString mapping, InputDevice *device);
 
   public slots:
+    void emergencyStop();
+    void openProfileBackups();
     void openConfigFileDialog();                // JoyTabSettings class
     void fillButtons();                         // JoyTabWidgetSets class
     void saveDeviceSettings(bool sync = false); // JoyTabSettings class
@@ -247,6 +249,7 @@ class JoyTabWidget : public QWidget
     bool alternatingSuitesActive = false;
     int alternatingActiveSuiteIndex = -1;
     QTimer *alternatingSuitesTimer;
+    QTimer *alternatingDisplayTimer;
     QWidget *alternatingSuitesPopup = nullptr;
     QLabel *alternatingSuitesPopupStatus = nullptr;
     QPushButton *alternatingSuitesPopupStartButton = nullptr;

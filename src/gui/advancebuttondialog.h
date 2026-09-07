@@ -27,6 +27,7 @@
 class JoyButton;
 class SimpleKeyGrabberButton;
 class QListWidgetItem;
+class QPushButton;
 
 namespace Ui {
 class AdvanceButtonDialog;
@@ -72,6 +73,8 @@ class AdvanceButtonDialog : public QDialog
     void turboButtonEnabledChange(bool state);
 
   public slots:
+    void undoSlots();
+    void redoSlots();
     void placeNewSlot(JoyButtonSlot *slot); // AdvanceBtnDlgAssign class
     void clearAllSlots();                   // AdvanceBtnDlgAssign class
 
@@ -113,6 +116,16 @@ class AdvanceButtonDialog : public QDialog
     void changeSlotHelpText(int index);    // AdvanceBtnDlgAssign class
 
   private:
+    void populateSlots();
+    QByteArray captureSlots() const;
+    void recordSlotHistory();
+    void restoreSlotHistory();
+    void updateHistoryButtons();
+    QList<QByteArray> slotHistory;
+    int slotHistoryIndex = -1;
+    bool restoringSlotHistory = false;
+    QPushButton *undoButton = nullptr;
+    QPushButton *redoButton = nullptr;
     Ui::AdvanceButtonDialog *ui;
 
     AdvanceButtonDialogHelper &getHelperLocal();

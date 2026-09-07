@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "joyaxiscontextmenu.h"
 
 #include "antkeymapper.h"
@@ -336,13 +338,13 @@ void JoyAxisContextMenu::setAxisPreset(QAction *action)
         break;
 
     case 10:
-        QMetaObject::invokeMethod(&helper, "clearAndResetAxisButtons", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(&helper, "clearAndResetAxisButtons", synchronousConnectionType(&helper));
         break;
     }
 
     if (nbuttonslot != nullptr)
     {
-        QMetaObject::invokeMethod(&helper, "setNAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setNAssignedSlot", synchronousConnectionType(&helper),
                                   Q_ARG(int, nbuttonslot->getSlotCode()), Q_ARG(int, nbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, nbuttonslot->getSlotMode()));
 
@@ -351,7 +353,7 @@ void JoyAxisContextMenu::setAxisPreset(QAction *action)
 
     if (pbuttonslot != nullptr)
     {
-        QMetaObject::invokeMethod(&helper, "setPAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setPAssignedSlot", synchronousConnectionType(&helper),
                                   Q_ARG(int, nbuttonslot->getSlotCode()), Q_ARG(int, nbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, nbuttonslot->getSlotMode()));
 
@@ -456,13 +458,13 @@ void JoyAxisContextMenu::setTriggerPreset(QAction *action)
 
     case 2:
         JoyAxisButton *pbutton = axis->getPAxisButton();
-        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(pbutton, "clearSlotsEventReset", synchronousConnectionType(pbutton));
         break;
     }
 
     if (pbuttonslot != nullptr)
     {
-        QMetaObject::invokeMethod(&helper, "setPAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setPAssignedSlot", synchronousConnectionType(&helper),
                                   Q_ARG(int, pbuttonslot->getSlotCode()), Q_ARG(int, pbuttonslot->getSlotCodeAlias()),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, pbuttonslot->getSlotMode()));
 

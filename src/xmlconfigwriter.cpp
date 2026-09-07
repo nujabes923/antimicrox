@@ -22,6 +22,10 @@
 #include "inputdevice.h"
 #include "xml/inputdevicexml.h"
 
+#include <QDateTime>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QUuid>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -63,32 +67,52 @@ XMLConfigWriter::~XMLConfigWriter()
 void XMLConfigWriter::write(InputDeviceXml *joystickXml)
 {
     writerError = false;
-
-    if (!configFile->isOpen())
-    {
-        if (configFile->open(QFile::WriteOnly | QFile::Text))
-        {
-            xml->setDevice(configFile);
-        } else
-        {
-            writerError = true;
-            writerErrorString = tr("Could not write to profile at %1.").arg(configFile->fileName());
-        }
-    } else
+    writerErrorString.clear();
+    const QString target = fileName;
+    if (target.isEmpty())
     {
         writerError = true;
-        writerErrorString = tr("Could not write to profile at %1.").arg(configFile->fileName());
+        writerErrorString = tr("No profile filename selected.");
+        return;
     }
 
-    if (!writerError)
+    // Keep the existing file intact until both its backup and the new XML are safe.
+    if (QFileInfo::exists(target))
     {
-        xml->writeStartDocument();
-        joystickXml->writeConfig(xml);
-        xml->writeEndDocument();
+        const QFileInfo info(target);
+        QDir directory(info.absolutePath());
+        const QString backupDirectory = directory.filePath(".antimicrox-backups");
+        const QString backupName = info.completeBaseName() + "." +
+            QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz") + "." +
+            QUuid::createUuid().toString(QUuid::Id128) + "." + info.suffix();
+        if (!directory.mkpath(backupDirectory) || !QFile::copy(target, QDir(backupDirectory).filePath(backupName)))
+        {
+            writerError = true;
+            writerErrorString = tr("Could not back up %1. The original profile was not changed.").arg(target);
+            return;
+        }
     }
 
-    if (configFile->isOpen())
-        configFile->close();
+    QSaveFile output(target);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        writerError = true;
+        writerErrorString = tr("Could not write to profile at %1: %2").arg(target, output.errorString());
+        return;
+    }
+    xml->setDevice(&output);
+    xml->writeStartDocument();
+    joystickXml->writeConfig(xml);
+    xml->writeEndDocument();
+    if (xml->hasError())
+    {
+        output.cancelWriting();
+        writerError = true;
+    } else if (!output.commit())
+        writerError = true;
+    xml->setDevice(nullptr);
+    if (writerError)
+        writerErrorString = tr("Could not save %1. The original profile was preserved.").arg(target);
 }
 
 /**
@@ -96,6 +120,7 @@ void XMLConfigWriter::write(InputDeviceXml *joystickXml)
  */
 void XMLConfigWriter::setFileName(QString filename)
 {
+    delete configFile;
     QFile *temp = new QFile(filename);
     fileName = filename;
     configFile = temp;

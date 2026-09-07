@@ -21,6 +21,7 @@
 #include "ui_mainwindow.h"
 
 #include "aboutdialog.h"
+#include "actionlibrarydialog.h"
 #include "advancestickassignmentdialog.h"
 #include "antimicrosettings.h"
 #include "autoprofileinfo.h"
@@ -67,6 +68,7 @@
 #include <QRegularExpression>
 #include <QResource>
 #include <QShowEvent>
+#include <QStatusBar>
 #include <QTextStream>
 #include <QTranslator>
 #include <QUrl>
@@ -79,6 +81,7 @@
 #include <SDL2/SDL_joystick.h>
 
 #ifdef Q_OS_WIN
+    #include <qt_windows.h>
     #include "winextras.h"
     #include <QSysInfo>
 #endif
@@ -225,10 +228,62 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
     // physical controller is discovered.
     if (m_graphical && m_joysticks->isEmpty())
         addOfflineJoystickTab();
+
+    QAction *emergency = new QAction(tr("Emergency Stop All"), this);
+    QAction *libraryAction = new QAction(tr("Custom Action Library…"), this);
+    libraryAction->setObjectName("openActionLibraryAction");
+    ui->menuOptions->addAction(libraryAction);
+    connect(libraryAction, &QAction::triggered, this, [this]() {
+        auto *dialog = new ActionLibraryDialog(m_settings, nullptr, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    });
+    emergency->setObjectName("emergencyStopAction");
+    ui->menuOptions->addAction(emergency);
+    connect(emergency, &QAction::triggered, this, &MainWindow::emergencyStopAll);
+#ifdef Q_OS_WIN
+    emergencyHotkeyRegistered = RegisterHotKey(reinterpret_cast<HWND>(winId()), 0x4a51,
+                                               MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F10);
+    emergency->setText(emergencyHotkeyRegistered ? tr("Emergency Stop All (Ctrl+Alt+F10)")
+                                               : tr("Emergency Stop All (global shortcut unavailable)"));
+    if (!emergencyHotkeyRegistered)
+        statusBar()->showMessage(tr("Ctrl+Alt+F10 is unavailable. Use Options > Emergency Stop All."));
+#endif
 }
+
+void MainWindow::emergencyStopAll()
+{
+    for (ActionLibraryDialog *library : findChildren<ActionLibraryDialog *>())
+        library->stopTrial();
+    for (JoyTabWidget *tab : findChildren<JoyTabWidget *>())
+        tab->emergencyStop();
+    statusBar()->showMessage(tr("Emergency stopped: rotation, turbo and held keys released."), 8000);
+}
+
+#ifdef Q_OS_WIN
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+#else
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, long *result)
+#endif
+{
+    const MSG *msg = static_cast<MSG *>(message);
+    if (msg->message == WM_HOTKEY && msg->wParam == 0x4a51)
+    {
+        emergencyStopAll();
+        *result = 0;
+        return true;
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+#endif
 
 MainWindow::~MainWindow()
 {
+#ifdef Q_OS_WIN
+    if (emergencyHotkeyRegistered)
+        UnregisterHotKey(reinterpret_cast<HWND>(winId()), 0x4a51);
+#endif
     qDebug() << "removing main window";
 
     if (trayIconMenu != nullptr)
@@ -237,8 +292,7 @@ MainWindow::~MainWindow()
     installEventFilter(trayIconMenu);
     installEventFilter(trayIcon);
 
-    delete m_offlineJoystick;
-    m_offlineJoystick = nullptr;
+    removeOfflineJoystick();
 
     delete ui;
 }
@@ -252,15 +306,18 @@ void MainWindow::addOfflineJoystickTab()
     {
         GameController *offlineController = new GameController(nullptr, 0, m_settings, 0, this);
 
-        QString rememberedControllerID;
         m_settings->getLock()->lock();
+        QString rememberedControllerID = m_settings->value("OfflineControllerID").toString();
         m_settings->beginGroup("Controllers");
+        if (!QFileInfo::exists(m_settings->value(QString("Controller%1LastSelected").arg(rememberedControllerID)).toString()))
+            rememberedControllerID.clear();
         const QStringList keys = m_settings->allKeys();
         for (const QString &key : keys)
         {
             static const QString prefix = QStringLiteral("Controller");
             static const QString suffix = QStringLiteral("LastSelected");
-            if (key.startsWith(prefix) && key.endsWith(suffix) && !m_settings->value(key).toString().isEmpty())
+            if (rememberedControllerID.isEmpty() && key.startsWith(prefix) && key.endsWith(suffix) &&
+                QFileInfo::exists(m_settings->value(key).toString()))
             {
                 rememberedControllerID = key.mid(prefix.size(), key.size() - prefix.size() - suffix.size());
                 break;

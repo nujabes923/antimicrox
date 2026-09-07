@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+#include "actionlibrarydialog.h"
+
 #include "joytabwidget.h"
 
 #include "advancestickassignmentdialog.h"
@@ -78,15 +81,12 @@
 #include <QStackedWidget>
 #include <QTimer>
 #include <QThread>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
 bool JoyTabWidget::changedNotSaved = false;
-
-static Qt::ConnectionType helperCallType(const QObject *helper)
-{
-    return helper->thread() == QThread::currentThread() ? Qt::DirectConnection : Qt::BlockingQueuedConnection;
-}
 
 JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, QWidget *parent)
     : QWidget(parent)
@@ -100,6 +100,9 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     alternatingSuitesTimer = new QTimer(this);
     alternatingSuitesTimer->setSingleShot(true);
     connect(alternatingSuitesTimer, &QTimer::timeout, this, &JoyTabWidget::alternatingSuitesTimeout);
+    alternatingDisplayTimer = new QTimer(this);
+    alternatingDisplayTimer->setInterval(100);
+    connect(alternatingDisplayTimer, &QTimer::timeout, this, &JoyTabWidget::updateAlternatingSuitesPopup);
 
     verticalLayout = new QVBoxLayout(this);
     verticalLayout->setContentsMargins(4, 4, 4, 4);
@@ -118,6 +121,14 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     configBox->setObjectName(QString::fromUtf8("configBox"));
     configBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     configHorizontalLayout->addWidget(configBox);
+    auto *libraryButton = new QPushButton(tr("Action Library"), this);
+    libraryButton->setObjectName("openActionLibraryButton");
+    configHorizontalLayout->addWidget(libraryButton);
+    connect(libraryButton, &QPushButton::clicked, this, [this]() {
+        auto *dialog = new ActionLibraryDialog(m_settings, nullptr, window());
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    });
 
     batteryIcon = new QLabel("", this);
     batteryIcon->setToolTip(tr("Battery level of controller"));
@@ -720,7 +731,7 @@ void JoyTabWidget::saveConfigFile()
     {
         QFileInfo fileinfo(filename);
 
-        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", helperCallType(&tabHelper),
+        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", synchronousConnectionType(&tabHelper),
                                   Q_ARG(QString, fileinfo.absoluteFilePath()));
         XMLConfigWriter *writer = tabHelper.getWriter();
 
@@ -797,7 +808,7 @@ void JoyTabWidget::resetJoystick()
         {
             removeCurrentButtons();
 
-            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
+            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", synchronousConnectionType(&tabHelper));
 
             fillButtons();
             refreshSetButtons();
@@ -842,7 +853,7 @@ void JoyTabWidget::resetJoystick()
 
             removeCurrentButtons();
 
-            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
+            QMetaObject::invokeMethod(&tabHelper, "reInitDevice", synchronousConnectionType(&tabHelper));
 
             fillButtons();
             refreshSetButtons();
@@ -895,7 +906,7 @@ void JoyTabWidget::saveAsConfig()
         }
         fileinfo.setFile(filename);
 
-        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", helperCallType(&tabHelper),
+        QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", synchronousConnectionType(&tabHelper),
                                   Q_ARG(QString, fileinfo.absoluteFilePath()));
         XMLConfigWriter *writer = tabHelper.getWriter();
 
@@ -977,7 +988,7 @@ void JoyTabWidget::changeJoyConfig(int index)
 
         if (powerLevel == SDL_JOYSTICK_POWER_WIRED || powerLevel == SDL_JOYSTICK_POWER_UNKNOWN)
         {
-            QMetaObject::invokeMethod(&tabHelper, "readConfigFile", helperCallType(&tabHelper), Q_ARG(QString, filename));
+            QMetaObject::invokeMethod(&tabHelper, "readConfigFile", synchronousConnectionType(&tabHelper), Q_ARG(QString, filename));
         } else
         {
             tabHelper.readConfigFile(filename);
@@ -1019,7 +1030,7 @@ void JoyTabWidget::changeJoyConfig(int index)
         removeCurrentButtons();
         emit forceTabUnflash(this);
 
-        QMetaObject::invokeMethod(&tabHelper, "reInitDevice", helperCallType(&tabHelper));
+        QMetaObject::invokeMethod(&tabHelper, "reInitDevice", synchronousConnectionType(&tabHelper));
 
         fillButtons();
         refreshSetButtons();
@@ -1644,8 +1655,9 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     if (!running)
     {
         alternatingSuitesTimer->stop();
+        alternatingDisplayTimer->stop();
         for (JoyButton *button : suites)
-            QMetaObject::invokeMethod(button, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
+            QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
         alternatingSuitesActive = false;
         alternatingActiveSuiteIndex = -1;
         alternatingSuitesStartButton->setChecked(false);
@@ -1655,13 +1667,14 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     }
 
     for (JoyButton *button : suites)
-        QMetaObject::invokeMethod(button, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
-    QMetaObject::invokeMethod(suites.first(), "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, true));
+        QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
+    QMetaObject::invokeMethod(suites.first(), "setExternalToggleState", synchronousConnectionType(suites.first()), Q_ARG(bool, true));
     alternatingSuitesActive = true;
     alternatingActiveSuiteIndex = 0;
     alternatingSuitesStartButton->setChecked(true);
     alternatingSuitesStartButton->setText(tr("Stop Alternating"));
     alternatingSuitesTimer->start(alternatingSuiteInterval(0));
+    alternatingDisplayTimer->start();
     updateAlternatingSuitesPopup();
 }
 
@@ -1691,13 +1704,40 @@ void JoyTabWidget::switchAlternatingSuite()
     JoyButton *outgoing = suites.at(alternatingActiveSuiteIndex);
     alternatingActiveSuiteIndex = (alternatingActiveSuiteIndex + 1) % suites.size();
     JoyButton *incoming = suites.at(alternatingActiveSuiteIndex);
-    QMetaObject::invokeMethod(outgoing, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, false));
-    QMetaObject::invokeMethod(incoming, "setExternalToggleState", Qt::QueuedConnection, Q_ARG(bool, true));
+    QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
+    QMetaObject::invokeMethod(incoming, "setExternalToggleState", synchronousConnectionType(incoming), Q_ARG(bool, true));
     alternatingSuitesTimer->start(alternatingSuiteInterval(alternatingActiveSuiteIndex));
     updateAlternatingSuitesPopup();
 }
 
 void JoyTabWidget::alternatingSuitesTimeout() { switchAlternatingSuite(); }
+
+void JoyTabWidget::emergencyStop()
+{
+    setAlternatingSuiteRunning(false);
+    QMetaObject::invokeMethod(m_joystick, [this]() {
+        for (JoyButton *button : m_joystick->findChildren<JoyButton *>())
+        {
+            button->clearPendingEvent();
+            button->eventReset();
+        }
+    }, synchronousConnectionType(m_joystick));
+    if (alternatingSuitesPopupStatus != nullptr)
+        alternatingSuitesPopupStatus->setText(tr("Emergency stopped — all keys released"));
+}
+
+void JoyTabWidget::openProfileBackups()
+{
+    const QString profile = configBox->currentData().toString();
+    const QString directory = QFileInfo(profile).absoluteDir().filePath(".antimicrox-backups");
+    if (profile.isEmpty() || !QDir(directory).exists())
+    {
+        QMessageBox::information(this, tr("Profile Backups"),
+                                 tr("Backups are created when you save changes to an existing profile."));
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
+}
 
 void JoyTabWidget::toggleAlternatingSuites()
 {
@@ -1738,6 +1778,11 @@ void JoyTabWidget::showAlternatingSuitesPopup()
         alternatingSuitesPopupStopButton->setMinimumSize(90, 44);
         buttonLayout->addWidget(alternatingSuitesPopupStartButton);
         buttonLayout->addWidget(alternatingSuitesPopupStopButton);
+        QPushButton *emergency = new QPushButton(tr("Emergency Stop"), alternatingSuitesPopup);
+        emergency->setObjectName("emergencyStopButton");
+        emergency->setToolTip(tr("Stop this controller's rotation and release all its keys.\nGlobal stop: Ctrl+Alt+F10."));
+        buttonLayout->addWidget(emergency);
+        connect(emergency, &QPushButton::clicked, this, &JoyTabWidget::emergencyStop);
         layout->addLayout(buttonLayout);
 
         connect(alternatingSuitesPopupStartButton, &QPushButton::clicked, this, [this]() {
@@ -1782,9 +1827,21 @@ void JoyTabWidget::updateAlternatingSuitesPopup()
     alternatingSuitesPopupStopButton->setText(tr("Stop"));
     alternatingSuitesPopupStartButton->setEnabled(!alternatingSuitesActive);
     alternatingSuitesPopupStopButton->setEnabled(alternatingSuitesActive);
-    alternatingSuitesPopupStatus->setText(alternatingSuitesActive
-                                              ? tr("Running — assignment set %1").arg(alternatingActiveSuiteIndex + 1)
-                                              : tr("Stopped"));
+    if (alternatingSuitesActive)
+    {
+        const QStringList ids = configuredAlternatingSuiteIds();
+        auto label = [this, &ids](int index) {
+            JoyButton *button = resolveAlternatingSuiteButton(ids.value(index));
+            return button != nullptr ? button->getPartialName() : ids.value(index);
+        };
+        const int next = (alternatingActiveSuiteIndex + 1) % ids.size();
+        alternatingSuitesPopupStatus->setText(
+            tr("Running %1: %2\nRemaining: %3 s\nNext %4: %5")
+                .arg(alternatingActiveSuiteIndex + 1).arg(label(alternatingActiveSuiteIndex))
+                .arg(qMax(0, alternatingSuitesTimer->remainingTime()) / 1000.0, 0, 'f', 1)
+                .arg(next + 1).arg(label(next)));
+    } else
+        alternatingSuitesPopupStatus->setText(tr("Stopped"));
 }
 
 void JoyTabWidget::showAlternatingSuitesDialog()
@@ -1977,6 +2034,9 @@ void JoyTabWidget::saveDeviceSettings(bool sync)
 
     m_settings->getLock()->lock();
     m_settings->endGroup();
+
+    if (configBox->currentIndex() > 0)
+        m_settings->setValue("OfflineControllerID", m_joystick->getUniqueIDString());
 
     if (sync)
         m_settings->sync();
@@ -3045,7 +3105,7 @@ void JoyTabWidget::performSetCopy()
 
             removeSetButtons(destSet);
 
-            QMetaObject::invokeMethod(sourceSet, "copyAssignments", Qt::BlockingQueuedConnection,
+            QMetaObject::invokeMethod(sourceSet, "copyAssignments", synchronousConnectionType(sourceSet),
                                       Q_ARG(SetJoystick *, destSet));
 
             // sourceSet->copyAssignments(destSet);

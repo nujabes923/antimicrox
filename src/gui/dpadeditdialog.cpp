@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "dpadeditdialog.h"
 #include "ui_dpadeditdialog.h"
 
@@ -260,7 +262,7 @@ void DPadEditDialog::implementPresets(int index)
     case 0:
     case 8:
 
-        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", synchronousConnectionType(&helper));
 
         dpad->getJoyButton(JoyDPadButton::DpadUp)->buildActiveZoneSummaryString();
         dpad->getJoyButton(JoyDPadButton::DpadDown)->buildActiveZoneSummaryString();
@@ -281,7 +283,7 @@ void DPadEditDialog::implementPresets(int index)
     tempHash.insert(JoyDPadButton::DpadRightDown, downRightButtonSlot);
 
     getHelperLocal().setPendingSlots(&tempHash);
-    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", synchronousConnectionType(&helper));
 }
 
 void DPadEditDialog::implementModes(int index)

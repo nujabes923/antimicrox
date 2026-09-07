@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "joycontrolstickeditdialog.h"
 #include "ui_joycontrolstickeditdialog.h"
 
@@ -361,7 +363,7 @@ void JoyControlStickEditDialog::implementPresets(int index)
     }
     case 0:
     case 8: {
-        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", synchronousConnectionType(&helper));
 
         ui->diagonalRangeSlider->setValue(45);
 
@@ -385,7 +387,7 @@ void JoyControlStickEditDialog::implementPresets(int index)
     tempHash.insert(JoyControlStick::StickRightDown, downRightButtonSlot);
 
     getHelperLocal().setPendingSlots(&tempHash);
-    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", synchronousConnectionType(&helper));
 }
 
 void JoyControlStickEditDialog::refreshStickStats(int x, int y)

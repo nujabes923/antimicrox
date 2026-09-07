@@ -77,6 +77,13 @@ class MainWindow : public QMainWindow
     void closeEvent(QCloseEvent *event) override;
 
     bool eventFilter(QObject *obj, QEvent *event) override;
+#ifdef Q_OS_WIN
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+#else
+    bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
+#endif
+#endif
 
     void retranslateUi();
     void loadConfigFile(QString fileLocation, int joystickIndex = 0);     // MainConfiguration class
@@ -93,6 +100,7 @@ class MainWindow : public QMainWindow
     void mappingUpdated(QString mapping, InputDevice *device);
 
   public slots:
+    void emergencyStopAll();
     void checkEachTenMinutesBattery(QMap<SDL_JoystickID, InputDevice *> *joysticks);
     void fillButtons();
     void makeJoystickTabs();
@@ -159,6 +167,7 @@ class MainWindow : public QMainWindow
 
     QMap<SDL_JoystickID, InputDevice *> *m_joysticks;
     InputDevice *m_offlineJoystick;
+    bool emergencyHotkeyRegistered = false;
     QMap<int, QList<QAction *>> profileActions;
 
     QSystemTrayIcon *trayIcon;

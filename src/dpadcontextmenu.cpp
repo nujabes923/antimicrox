@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "dpadcontextmenu.h"
 
 #include "antkeymapper.h"
@@ -283,7 +285,7 @@ void DPadContextMenu::setDPadPreset(QAction *action)
 
     case 7:
 
-        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(&helper, "clearButtonsSlotsEventReset", synchronousConnectionType(&helper));
 
         break;
     }
@@ -299,7 +301,7 @@ void DPadContextMenu::setDPadPreset(QAction *action)
     tempHash.insert(JoyDPadButton::DpadRightDown, downRightButtonSlot);
 
     getHelper().setPendingSlots(&tempHash);
-    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", synchronousConnectionType(&helper));
 }
 
 /**

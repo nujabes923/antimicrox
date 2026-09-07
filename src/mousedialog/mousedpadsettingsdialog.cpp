@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "mousedpadsettingsdialog.h"
 
 #include "joydpad.h"
@@ -313,7 +315,7 @@ void MouseDPadSettingsDialog::updateExtraAccelerationCurve(int index)
         InputDevice *device = dpad->getParentSet()->getInputDevice();
 
         PadderCommon::lockInputDevices();
-        QMetaObject::invokeMethod(device, "haltServices", Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(device, "haltServices", synchronousConnectionType(device));
 
         temp = getExtraAccelCurveForIndex(index);
         dpad->setButtonsExtraAccelerationCurve(temp);

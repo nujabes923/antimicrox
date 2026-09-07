@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "advancebuttondialog.h"
 #include "ui_advancebuttondialog.h"
 
@@ -25,6 +27,10 @@
 #include "joybuttontypes/joybutton.h"
 #include "joytabwidget.h"
 #include "simplekeygrabberbutton.h"
+#include "xml/joybuttonslotxml.h"
+#include <QXmlStreamReader>
+#include <QXmlStreamWriter>
+#include <QShortcut>
 
 #include <cmath>
 
@@ -57,6 +63,7 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
     setAttribute(Qt::WA_DeleteOnClose);
 
     QPushButton *saveButton = ui->buttonBox->addButton(tr("Save"), QDialogButtonBox::ActionRole);
+    saveButton->setObjectName("saveProfileButton");
     saveButton->setToolTip(tr("Apply the current slot values and save this configuration file."));
     connect(saveButton, &QPushButton::clicked, this, &AdvanceButtonDialog::saveCurrentProfile);
 
@@ -98,104 +105,7 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
     ui->randomToggleRepeatMinimumSpinBox->setEnabled(m_button->getToggleState() && m_button->isUsingRandomTurbo());
     ui->randomToggleRepeatMaximumSpinBox->setEnabled(m_button->getToggleState() && m_button->isUsingRandomTurbo());
 
-    QListIterator<JoyButtonSlot *> iter(*(m_button->getAssignedSlots()));
-
-    while (iter.hasNext())
-    {
-        JoyButtonSlot *buttonslot = iter.next();
-        qDebug() << "slot string for grab btn is: " << buttonslot->getSlotString();
-        SimpleKeyGrabberButton *existingCode = new SimpleKeyGrabberButton(this);
-        existingCode->setText(buttonslot->getSlotString());
-
-        switch (static_cast<int>(buttonslot->getSlotMode()))
-        {
-        case 11:
-
-            if (!buttonslot->getTextData().isEmpty())
-            {
-                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyLoadProfile);
-                existingCode->setToolTip(buttonslot->getTextData());
-            }
-
-            break;
-
-        case 13:
-
-            if (!buttonslot->getTextData().isEmpty())
-            {
-                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyTextEntry);
-                existingCode->setToolTip(buttonslot->getTextData());
-            }
-
-            break;
-
-        case 14:
-
-            if (!buttonslot->getTextData().isEmpty())
-            {
-                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyExecute);
-                existingCode->setToolTip(buttonslot->getTextData());
-
-                if (buttonslot->getExtraData().canConvert<QString>())
-                    existingCode->getValue()->setExtraData(buttonslot->getExtraData().toString());
-            }
-
-            break;
-
-        // JoyMix
-        case 15:
-
-            qDebug() << "text data for joy mix is: " << buttonslot->getTextData();
-            qDebug() << "slot string for joy mix is: " << buttonslot->getSlotString();
-            qDebug() << "amount of mini slots: " << buttonslot->getMixSlots()->count();
-
-            if (!buttonslot->getTextData().isEmpty())
-            {
-                existingCode->setValues(buttonslot->getTextData(), buttonslot->getMixSlots(),
-                                        JoyButtonSlot::JoySlotInputAction::JoyMix);
-                existingCode->setToolTip(buttonslot->getTextData());
-
-                // try again
-                if (existingCode->text() == tr("[NO KEY]"))
-                {
-                    existingCode->setValues(buttonslot->getTextData(), buttonslot->getMixSlots(),
-                                            JoyButtonSlot::JoySlotInputAction::JoyMix);
-                    existingCode->setToolTip(buttonslot->getTextData());
-                    existingCode->setText(buttonslot->getSlotString());
-                }
-
-                qDebug() << "Existing code for Joy Mix: " << existingCode->text();
-            }
-
-            break;
-
-        default:
-
-            existingCode->setValue(buttonslot->getSlotCode(), buttonslot->getSlotCodeAlias(), buttonslot->getSlotMode());
-            break;
-        }
-
-        if (buttonslot->getSlotMode() == JoyButtonSlot::JoyDelay)
-        {
-            existingCode->getValue()->setUseRandomDelay(buttonslot->isUsingRandomDelay());
-            existingCode->getValue()->setRandomDelayMinimum(buttonslot->getRandomDelayMinimum());
-            existingCode->getValue()->setRandomDelayMaximum(buttonslot->getRandomDelayMaximum());
-        }
-
-        QListWidgetItem *item = new QListWidgetItem(ui->slotListWidget);
-        item->setData(Qt::UserRole, QVariant::fromValue<SimpleKeyGrabberButton *>(existingCode));
-        QHBoxLayout *layout = new QHBoxLayout();
-        layout->setContentsMargins(10, 0, 10, 0);
-        layout->addWidget(existingCode);
-        QWidget *widget = new QWidget();
-        widget->setLayout(layout);
-        item->setSizeHint(widget->sizeHint());
-
-        ui->slotListWidget->setItemWidget(item, widget);
-        connectButtonEvents(existingCode);
-    }
-
-    appendBlankKeyGrabber();
+    populateSlots();
     populateSetSelectionComboBox();
     populateSlotSetSelectionComboBox();
 
@@ -370,6 +280,219 @@ AdvanceButtonDialog::AdvanceButtonDialog(JoyButton *button, QWidget *parent)
             &AdvanceButtonDialog::setButtonTurboMode);
     connect(ui->loadProfilePushButton, &QPushButton::clicked, this, &AdvanceButtonDialog::showSelectProfileWindow);
     connect(ui->execToolButton, &QToolButton::clicked, this, &AdvanceButtonDialog::showFindExecutableWindow);
+    undoButton = ui->buttonBox->addButton(tr("Undo"), QDialogButtonBox::ActionRole);
+    redoButton = ui->buttonBox->addButton(tr("Redo"), QDialogButtonBox::ActionRole);
+    QPushButton *backupsButton = ui->buttonBox->addButton(tr("Backups"), QDialogButtonBox::ActionRole);
+    backupsButton->setObjectName("openProfileBackupsButton");
+    backupsButton->setToolTip(tr("Open previous profile versions. Load a backup and use Save As to restore it."));
+    JoyTabWidget *profileTab = nullptr;
+    for (QWidget *ancestor = parentWidget(); ancestor != nullptr && profileTab == nullptr; ancestor = ancestor->parentWidget())
+        profileTab = qobject_cast<JoyTabWidget *>(ancestor);
+    backupsButton->setEnabled(profileTab != nullptr);
+    if (profileTab != nullptr)
+        connect(backupsButton, &QPushButton::clicked, profileTab, &JoyTabWidget::openProfileBackups);
+    undoButton->setObjectName("undoSlotsButton");
+    redoButton->setObjectName("redoSlotsButton");
+    undoButton->setToolTip(tr("Undo assignment edits (Ctrl+Z). Up to 100 edits in this window."));
+    redoButton->setToolTip(tr("Redo assignment edits (Ctrl+Y)."));
+    connect(undoButton, &QPushButton::clicked, this, &AdvanceButtonDialog::undoSlots);
+    connect(redoButton, &QPushButton::clicked, this, &AdvanceButtonDialog::redoSlots);
+    auto *undoShortcut = new QShortcut(QKeySequence::Undo, this);
+    auto *redoShortcut = new QShortcut(QKeySequence::Redo, this);
+    connect(undoShortcut, &QShortcut::activated, this, &AdvanceButtonDialog::undoSlots);
+    connect(redoShortcut, &QShortcut::activated, this, &AdvanceButtonDialog::redoSlots);
+    recordSlotHistory();
+    connect(m_button, &JoyButton::slotsChanged, this, &AdvanceButtonDialog::recordSlotHistory, Qt::QueuedConnection);
+    saveButton->setToolTip(tr("Save this profile. Previous versions are kept in .antimicrox-backups next to the profile."));
+}
+
+QByteArray AdvanceButtonDialog::captureSlots() const
+{
+    QByteArray data;
+    QMetaObject::invokeMethod(m_button, [this, &data]() {
+        QXmlStreamWriter writer(&data);
+        writer.writeStartElement("slots");
+        for (JoyButtonSlot *slot : *m_button->getAssignedSlots())
+        {
+            JoyButtonSlotXml xml(slot);
+            xml.writeConfig(&writer);
+        }
+        writer.writeEndElement();
+    }, synchronousConnectionType(m_button));
+    return data;
+}
+
+void AdvanceButtonDialog::recordSlotHistory()
+{
+    if (restoringSlotHistory)
+        return;
+    const QByteArray data = captureSlots();
+    if (slotHistoryIndex >= 0 && slotHistory.at(slotHistoryIndex) == data)
+        return;
+    while (slotHistory.size() > slotHistoryIndex + 1)
+        slotHistory.removeLast();
+    slotHistory.append(data);
+    if (slotHistory.size() > 101)
+        slotHistory.removeFirst();
+    slotHistoryIndex = slotHistory.size() - 1;
+    updateHistoryButtons();
+}
+
+void AdvanceButtonDialog::updateHistoryButtons()
+{
+    undoButton->setEnabled(slotHistoryIndex > 0);
+    redoButton->setEnabled(slotHistoryIndex + 1 < slotHistory.size());
+}
+
+void AdvanceButtonDialog::undoSlots()
+{
+    commitCurrentSlotEdits();
+    recordSlotHistory();
+    if (slotHistoryIndex > 0)
+    {
+        --slotHistoryIndex;
+        restoreSlotHistory();
+    }
+}
+
+void AdvanceButtonDialog::redoSlots()
+{
+    commitCurrentSlotEdits();
+    recordSlotHistory();
+    if (slotHistoryIndex + 1 < slotHistory.size())
+    {
+        ++slotHistoryIndex;
+        restoreSlotHistory();
+    }
+}
+
+void AdvanceButtonDialog::restoreSlotHistory()
+{
+    restoringSlotHistory = true;
+    const QByteArray data = slotHistory.at(slotHistoryIndex);
+    QMetaObject::invokeMethod(m_button, [this, &data]() {
+        m_button->clearSlotsEventReset();
+        QXmlStreamReader reader(data);
+        reader.readNextStartElement();
+        while (reader.readNextStartElement())
+        {
+            auto *slot = new JoyButtonSlot(m_button);
+            JoyButtonSlotXml xml(slot);
+            xml.readConfig(&reader);
+            if (!m_button->insertAssignedSlot(slot))
+                delete slot;
+        }
+    }, synchronousConnectionType(m_button));
+    populateSlots();
+    ui->slotListWidget->setCurrentRow(0);
+    performStatsWidgetRefresh(ui->slotListWidget->currentItem());
+    changeTurboForSequences();
+    restoringSlotHistory = false;
+    updateHistoryButtons();
+    emit slotsChanged();
+}
+
+void AdvanceButtonDialog::populateSlots()
+{
+    ui->slotListWidget->clear();
+    QListIterator<JoyButtonSlot *> iter(*(m_button->getAssignedSlots()));
+
+    while (iter.hasNext())
+    {
+        JoyButtonSlot *buttonslot = iter.next();
+        qDebug() << "slot string for grab btn is: " << buttonslot->getSlotString();
+        SimpleKeyGrabberButton *existingCode = new SimpleKeyGrabberButton(this);
+        existingCode->setText(buttonslot->getSlotString());
+
+        switch (static_cast<int>(buttonslot->getSlotMode()))
+        {
+        case 11:
+
+            if (!buttonslot->getTextData().isEmpty())
+            {
+                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyLoadProfile);
+                existingCode->setToolTip(buttonslot->getTextData());
+            }
+
+            break;
+
+        case 13:
+
+            if (!buttonslot->getTextData().isEmpty())
+            {
+                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyTextEntry);
+                existingCode->setToolTip(buttonslot->getTextData());
+            }
+
+            break;
+
+        case 14:
+
+            if (!buttonslot->getTextData().isEmpty())
+            {
+                existingCode->setValue(buttonslot->getTextData(), JoyButtonSlot::JoyExecute);
+                existingCode->setToolTip(buttonslot->getTextData());
+
+                if (buttonslot->getExtraData().canConvert<QString>())
+                    existingCode->getValue()->setExtraData(buttonslot->getExtraData().toString());
+            }
+
+            break;
+
+        // JoyMix
+        case 15:
+
+            qDebug() << "text data for joy mix is: " << buttonslot->getTextData();
+            qDebug() << "slot string for joy mix is: " << buttonslot->getSlotString();
+            qDebug() << "amount of mini slots: " << buttonslot->getMixSlots()->count();
+
+            if (!buttonslot->getTextData().isEmpty())
+            {
+                existingCode->setValues(buttonslot->getTextData(), buttonslot->getMixSlots(),
+                                        JoyButtonSlot::JoySlotInputAction::JoyMix);
+                existingCode->setToolTip(buttonslot->getTextData());
+
+                // try again
+                if (existingCode->text() == tr("[NO KEY]"))
+                {
+                    existingCode->setValues(buttonslot->getTextData(), buttonslot->getMixSlots(),
+                                            JoyButtonSlot::JoySlotInputAction::JoyMix);
+                    existingCode->setToolTip(buttonslot->getTextData());
+                    existingCode->setText(buttonslot->getSlotString());
+                }
+
+                qDebug() << "Existing code for Joy Mix: " << existingCode->text();
+            }
+
+            break;
+
+        default:
+
+            existingCode->setValue(buttonslot->getSlotCode(), buttonslot->getSlotCodeAlias(), buttonslot->getSlotMode());
+            break;
+        }
+
+        if (buttonslot->getSlotMode() == JoyButtonSlot::JoyDelay)
+        {
+            existingCode->getValue()->setUseRandomDelay(buttonslot->isUsingRandomDelay());
+            existingCode->getValue()->setRandomDelayMinimum(buttonslot->getRandomDelayMinimum());
+            existingCode->getValue()->setRandomDelayMaximum(buttonslot->getRandomDelayMaximum());
+        }
+
+        QListWidgetItem *item = new QListWidgetItem(ui->slotListWidget);
+        item->setData(Qt::UserRole, QVariant::fromValue<SimpleKeyGrabberButton *>(existingCode));
+        QHBoxLayout *layout = new QHBoxLayout();
+        layout->setContentsMargins(10, 0, 10, 0);
+        layout->addWidget(existingCode);
+        QWidget *widget = new QWidget();
+        widget->setLayout(layout);
+        item->setSizeHint(widget->sizeHint());
+
+        ui->slotListWidget->setItemWidget(item, widget);
+        connectButtonEvents(existingCode);
+    }
+
+    appendBlankKeyGrabber();
 }
 
 // for tests
@@ -513,11 +636,11 @@ void AdvanceButtonDialog::connectButtonEvents(SimpleKeyGrabberButton *button)
 
         if (tempbuttonslot->getSlotMode() == JoyButtonSlot::JoySlotInputAction::JoyMix)
         {
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                       Q_ARG(JoyButtonSlot *, tempbuttonslot), Q_ARG(int, index));
         } else
         {
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                       Q_ARG(int, tempbuttonslot->getSlotCode()),
                                       Q_ARG(int, tempbuttonslot->getSlotCodeAlias()), Q_ARG(int, index),
                                       Q_ARG(JoyButtonSlot::JoySlotInputAction, tempbuttonslot->getSlotMode()));
@@ -550,7 +673,7 @@ void AdvanceButtonDialog::deleteSlot(bool showWarning)
 #if QT_VERSION >= QT_VERSION_CHECK(5, 4, 0)
             QTimer::singleShot(0, &helper, [this, index]() { (&helper)->removeAssignedSlot(index); });
 #else
-            QMetaObject::invokeMethod(&helper, "removeAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, index));
+            QMetaObject::invokeMethod(&helper, "removeAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, index));
 #endif
 
             index = qMax(0, index - 1);
@@ -617,7 +740,7 @@ void AdvanceButtonDialog::insertSlot()
                     connectButtonEvents(blankButton);
                     blankButton->refreshButtonLabel();
 
-                    QMetaObject::invokeMethod(&helper, "insertAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, 0),
+                    QMetaObject::invokeMethod(&helper, "insertAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, 0),
                                               Q_ARG(int, 0), Q_ARG(int, current));
 
                     updateSlotsScrollArea(0);
@@ -775,7 +898,7 @@ void AdvanceButtonDialog::joinSlot()
         connectButtonEvents(blankButton);
         blankButton->refreshButtonLabel(); // instead of blankButton->setText(text);
 
-        QMetaObject::invokeMethod(&helper, "insertAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "insertAssignedSlot", synchronousConnectionType(m_button),
                                   Q_ARG(JoyButtonSlot *, blankButton->getValue()), Q_ARG(int, index), Q_ARG(bool, false));
     }
 
@@ -844,7 +967,7 @@ void AdvanceButtonDialog::splitSlot()
             connectButtonEvents(blankButton);
             blankButton->refreshButtonLabel(); // instead of blankButton->setText(text);
 
-            QMetaObject::invokeMethod(&helper, "insertAssignedSlot", Qt::BlockingQueuedConnection,
+            QMetaObject::invokeMethod(&helper, "insertAssignedSlot", synchronousConnectionType(m_button),
                                       Q_ARG(int, blankButton->getValue()->getSlotCode()),
                                       Q_ARG(int, blankButton->getValue()->getSlotCodeAlias()), Q_ARG(int, indexKeyboardSlot),
                                       Q_ARG(JoyButtonSlot::JoySlotInputAction, blankButton->getValue()->getSlotMode()));
@@ -903,7 +1026,7 @@ void AdvanceButtonDialog::insertKindOfSlot(QListWidgetItem *item, int slotProper
             commitDelaySlot(tempbutton, index);
         } else
         {
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, actionTime),
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, actionTime),
                                       Q_ARG(int, 0), Q_ARG(int, index),
                                       Q_ARG(JoyButtonSlot::JoySlotInputAction, inputAction));
         }
@@ -956,7 +1079,7 @@ void AdvanceButtonDialog::clearAllSlots()
     appendBlankKeyGrabber();
     changeTurboForSequences();
 
-    QMetaObject::invokeMethod(m_button, "clearSlotsEventReset", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(m_button, "clearSlotsEventReset", synchronousConnectionType(m_button));
     performStatsWidgetRefresh(ui->slotListWidget->currentItem());
 
     emit slotsChanged();
@@ -1006,7 +1129,7 @@ void AdvanceButtonDialog::insertCycleSlot(QListWidgetItem *item)
     SimpleKeyGrabberButton *tempbutton = item->data(Qt::UserRole).value<SimpleKeyGrabberButton *>();
     tempbutton->setValue(1, JoyButtonSlot::JoyCycle);
 
-    QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, 1), Q_ARG(int, 0),
+    QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, 1), Q_ARG(int, 0),
                               Q_ARG(int, index), Q_ARG(JoyButtonSlot::JoySlotInputAction, JoyButtonSlot::JoyCycle));
 
     updateSlotsScrollArea(1);
@@ -1019,7 +1142,7 @@ void AdvanceButtonDialog::placeNewSlot(JoyButtonSlot *slot)
         ui->slotListWidget->currentItem()->data(Qt::UserRole).value<SimpleKeyGrabberButton *>();
     tempbutton->setValue(slot->getSlotCode(), slot->getSlotCodeAlias(), slot->getSlotMode());
 
-    QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, slot->getSlotCode()),
+    QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, slot->getSlotCode()),
                               Q_ARG(int, slot->getSlotCodeAlias()), Q_ARG(int, index),
                               Q_ARG(JoyButtonSlot::JoySlotInputAction, slot->getSlotMode()));
 
@@ -1172,7 +1295,7 @@ void AdvanceButtonDialog::insertTextEntrySlot(QListWidgetItem *item)
     {
         textEntryButton->setValue(entryText, JoyButtonSlot::JoyTextEntry);
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                   Q_ARG(JoyButtonSlot *, textEntryButton->getValue()), Q_ARG(int, index));
 
         textEntryButton->setToolTip(entryText);
@@ -1223,7 +1346,7 @@ void AdvanceButtonDialog::insertExecuteSlot(QListWidgetItem *item, QStringList &
             prevExecAndArgs << argsExecSlot;
         }
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                   Q_ARG(JoyButtonSlot *, execbutton->getValue()), Q_ARG(int, index));
 
         execbutton->setToolTip(execSlotName);
@@ -1359,7 +1482,7 @@ void AdvanceButtonDialog::checkSlotTimeUpdate()
                 commitDelaySlot(button, index);
             } else
             {
-                QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+                QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                           Q_ARG(int, actionTime), Q_ARG(int, 0), Q_ARG(int, index),
                                           Q_ARG(JoyButtonSlot::JoySlotInputAction, slotMode));
             }
@@ -1405,9 +1528,7 @@ bool AdvanceButtonDialog::commitDelaySlot(SimpleKeyGrabberButton *button, int in
     const int randomDelayMaximum = slot->getRandomDelayMaximum();
 
     bool updated = false;
-    const Qt::ConnectionType connectionType = m_button->thread() == QThread::currentThread()
-                                                  ? Qt::DirectConnection
-                                                  : Qt::BlockingQueuedConnection;
+    const Qt::ConnectionType connectionType = synchronousConnectionType(m_button);
     const bool invoked = QMetaObject::invokeMethod(
         m_button,
         [this, index, code, useRandomDelay, randomDelayMinimum, randomDelayMaximum, &updated]() {
@@ -1430,7 +1551,7 @@ void AdvanceButtonDialog::checkSlotMouseModUpdate()
     {
         tempbutton->setValue(tempMouseMod, tempbuttonslot->getSlotMode());
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, tempMouseMod),
+        QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, tempMouseMod),
                                   Q_ARG(int, 0), Q_ARG(int, index),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, tempbuttonslot->getSlotMode()));
 
@@ -1452,7 +1573,7 @@ void AdvanceButtonDialog::checkSlotSetChangeUpdate()
         int setIndex = ui->slotSetChangeComboBox->itemData(comboIndex).toInt();
         tempbutton->setValue(setIndex, buttonslot->getSlotMode());
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, setIndex),
+        QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, setIndex),
                                   Q_ARG(int, 0), Q_ARG(int, index),
                                   Q_ARG(JoyButtonSlot::JoySlotInputAction, buttonslot->getSlotMode()));
 
@@ -1493,7 +1614,7 @@ void AdvanceButtonDialog::checkSlotDistanceUpdate()
         {
             tempbutton->setValue(testDistance, buttonslot->getSlotMode());
 
-            QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection, Q_ARG(int, testDistance),
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, testDistance),
                                       Q_ARG(int, 0), Q_ARG(int, index),
                                       Q_ARG(JoyButtonSlot::JoySlotInputAction, buttonslot->getSlotMode()));
 
@@ -1742,7 +1863,7 @@ void AdvanceButtonDialog::showSelectProfileWind(QListWidgetItem *item, QString &
         SimpleKeyGrabberButton *button = item->data(Qt::UserRole).value<SimpleKeyGrabberButton *>();
         button->setValue(profileName, JoyButtonSlot::JoyLoadProfile);
 
-        QMetaObject::invokeMethod(&helper, "setAssignedSlot", Qt::BlockingQueuedConnection,
+        QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
                                   Q_ARG(JoyButtonSlot *, button->getValue()), Q_ARG(int, index));
 
         button->setToolTip(profileName);

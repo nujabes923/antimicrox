@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qtconnectionhelper.h"
+
 #include "joycontrolstickcontextmenu.h"
 
 #include "antkeymapper.h"
@@ -359,7 +361,7 @@ void JoyControlStickContextMenu::setStickPreset(QAction *action)
     tempHash.insert(JoyControlStick::StickRightDown, downRightButtonSlot);
 
     getHelperLocal().setPendingSlots(&tempHash);
-    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(&helper, "setFromPendingSlots", synchronousConnectionType(&helper));
 }
 
 int JoyControlStickContextMenu::getPresetIndex()
