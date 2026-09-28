@@ -132,6 +132,7 @@ set(antimicrox_MAIN src/main.cpp)
 set(antimicrox_SOURCES
         src/actionlibrary.cpp
         src/gui/actionlibrarydialog.cpp
+        src/gui/potiontimerdialog.cpp
         src/antimicrosettings.cpp
         src/antkeymapper.cpp
         src/applaunchhelper.cpp
@@ -265,6 +266,7 @@ set(antimicrox_SOURCES
 set(antimicrox_HEADERS
         src/actionlibrary.h
         src/gui/actionlibrarydialog.h
+        src/gui/potiontimerdialog.h
         src/antimicrosettings.h
         src/antkeymapper.h
         src/applaunchhelper.h
@@ -790,14 +792,18 @@ if(WIN32)
     # Required platform plugin
     get_target_property(QtCore_LOCATION Qt${QT_VERSION_MAJOR}::Core LOCATION)
     get_filename_component(QT_DLL_DIR ${QtCore_LOCATION} PATH)
+    find_file(QT_WINDOWS_PLATFORM_DLL NAMES qwindows.dll
+        HINTS "${QT_DLL_DIR}/../plugins/platforms"
+              "${QT_DLL_DIR}/../share/qt${QT_VERSION_MAJOR}/plugins/platforms"
+        REQUIRED)
     add_custom_command(TARGET antimicrox POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:antimicrox>/platforms"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT_DLL_DIR}/../plugins/platforms/qwindows.dll"
+            "${QT_WINDOWS_PLATFORM_DLL}"
             "$<TARGET_FILE_DIR:antimicrox>/platforms/qwindows.dll"
     )
     install(FILES
-        ${QT_DLL_DIR}/../plugins/platforms/qwindows.dll
+        "${QT_WINDOWS_PLATFORM_DLL}"
         DESTINATION ./bin/platforms/)
 endif(WIN32)
 

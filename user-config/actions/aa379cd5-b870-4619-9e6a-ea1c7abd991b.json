@@ -1,0 +1,11 @@
+{
+    "description": "近绳试用版；Alt 为跳跃。方向+上100ms → 方向+上+Alt90ms → 方向+上160ms → 上740ms；共1090ms。分段交界会松开并重新按下保留键。按键实录推导，未验证游戏成功率；距离不同需调整方向时长。目标按键关闭 Turbo/Toggle。",
+    "favorite": false,
+    "id": "aa379cd5-b870-4619-9e6a-ea1c7abd991b",
+    "name": "向左挂绳跳 (copy)",
+    "revision": 1,
+    "schema": 1,
+    "slotsXml": "<slots><slot><code>100</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>90</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0x1000023</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>160</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>740</code><mode>keypress</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot></slots>",
+    "tags": "冒险岛,挂绳,跳跃,试用",
+    "updatedUtc": "2026-09-26T17:28:05.982Z"
+}

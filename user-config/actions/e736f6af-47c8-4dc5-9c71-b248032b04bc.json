@@ -1,0 +1,11 @@
+{
+    "description": "",
+    "favorite": false,
+    "id": "e736f6af-47c8-4dc5-9c71-b248032b04bc",
+    "name": "遗迹4专用",
+    "revision": 1,
+    "schema": 1,
+    "slotsXml": "<slots><slot><code>40</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>20</code><mode>pause</mode></slot><slot><code>40</code><mode>keypress</mode></slot><slot><code>0x1000021</code><mode>keyboard</mode></slot><slot><code>20</code><mode>pause</mode></slot><slot><code>40</code><mode>keypress</mode></slot><slot><code>0x1000014</code><mode>keyboard</mode></slot><slot><code>20</code><mode>pause</mode></slot></slots>",
+    "tags": "",
+    "updatedUtc": "2026-09-24T06:42:40.865Z"
+}

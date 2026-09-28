@@ -26,6 +26,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QProcess>
+#include <QFileInfo>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -165,6 +167,26 @@ ActionLibraryDialog::ActionLibraryDialog(AntiMicroSettings *settings, JoyButton 
     auto *sample = new QHBoxLayout;
     right->addLayout(sample);
     add(sample, tr("Example: Left / Right · 1 s"), [this]() { useExample(); });
+#ifdef Q_OS_WIN
+    auto *record = add(sample, QString::fromUtf8("快速录制…"), [this]() {
+        stopTrial();
+        for (QWidget *ancestor = parentWidget(); ancestor != nullptr; ancestor = ancestor->parentWidget())
+            if (auto *main = qobject_cast<MainWindow *>(ancestor)) { main->emergencyStopAll(); break; }
+        const QString executable = QCoreApplication::applicationDirPath() + "/ActionRecorder.exe";
+        if (!QFileInfo::exists(executable))
+        { report(tr("ActionRecorder.exe is missing from the application folder."), true); return; }
+        auto *process = new QProcess(qApp);
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), process, &QObject::deleteLater);
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this](int, QProcess::ExitStatus) { refreshLibrary(); });
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) { report(process->errorString(), true); process->deleteLater(); }
+        });
+        process->start(executable, {"--library", library.directory()});
+        report(QString::fromUtf8("录制窗口已打开。F8 录制，F10 停止；保存并关闭后，动作会出现在左侧列表。"));
+    });
+    record->setObjectName("quickRecordAction");
+#endif
     auto *capture = add(sample, tr("Capture Current Button"), [this]() { captureTarget(); });
     capture->setEnabled(target != nullptr);
     splitter->setSizes({280, 760});

@@ -1,0 +1,11 @@
+{
+  "description": "近绳挂绳后同向跳离（试用）：方向+上100ms → 方向+上+Alt90ms → 方向+上160ms → 上250ms → 全松20ms → 方向+Alt90ms（第二跳）→ 方向150ms。共860ms。250ms为挂绳等待试用值，不检测挂绳成功；过早跳或爬太久可调整。分段交界会松开再按。Alt为跳跃，关闭Turbo/Toggle。",
+  "favorite": false,
+  "id": "88cc0087-d318-41f8-a1e2-14c7ed31653f",
+  "name": "向左挂绳跳",
+  "revision": 3,
+  "schema": 1,
+  "slotsXml": "<slots><slot><code>100</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>90</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0x1000023</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>160</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>250</code><mode>keypress</mode></slot><slot><code>0x1000013</code><mode>keyboard</mode></slot><slot><code>20</code><mode>pause</mode></slot><slot><code>90</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0x1000023</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot><slot><code>150</code><mode>keypress</mode></slot><slot><code>0x1000012</code><mode>keyboard</mode></slot><slot><code>0</code><mode>pause</mode></slot></slots>",
+  "tags": "冒险岛,挂绳,跳跃,试用",
+  "updatedUtc": "2026-09-26T17:34:48.342486+00:00"
+}

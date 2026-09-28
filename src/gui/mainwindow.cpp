@@ -22,6 +22,7 @@
 
 #include "aboutdialog.h"
 #include "actionlibrarydialog.h"
+#include "potiontimerdialog.h"
 #include "advancestickassignmentdialog.h"
 #include "antimicrosettings.h"
 #include "autoprofileinfo.h"
@@ -39,6 +40,7 @@
 #include "joydpadbuttonwidget.h"
 #include "joysensorpushbutton.h"
 #include "joystick.h"
+#include <QXmlStreamReader>
 #include "joystickstatuswindow.h"
 #include "joytabwidget.h"
 #include "mainsettingsdialog.h"
@@ -87,6 +89,28 @@
 #endif
 
 #define CHECK_BATTERIES_MSEC 600000
+
+// Keep the device/tab indices intact for profiles and event routing, but hide
+// auxiliary HID interfaces that cannot supply any mappable input.
+static void hideEmptyDeviceTabs(QTabWidget *tabs)
+{
+    int firstVisible = -1;
+    for (int i = 0; i < tabs->count(); ++i)
+    {
+        auto *tab = qobject_cast<JoyTabWidget *>(tabs->widget(i));
+        if (!tab)
+            continue;
+        InputDevice *device = tab->getJoystick();
+        const bool usable = device->getNumberRawButtons() > 0 || device->getNumberRawAxes() > 0 ||
+                            device->getNumberRawHats() > 0 || device->hasSensor(ACCELEROMETER) ||
+                            device->hasSensor(GYROSCOPE);
+        tabs->setTabVisible(i, usable);
+        if (usable && firstVisible < 0)
+            firstVisible = i;
+    }
+    if (firstVisible >= 0 && !tabs->isTabVisible(tabs->currentIndex()))
+        tabs->setCurrentIndex(firstVisible);
+}
 
 MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLineUtility *cmdutility,
                        AntiMicroSettings *settings, bool graphical, QWidget *parent)
@@ -230,6 +254,17 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
         addOfflineJoystickTab();
 
     QAction *emergency = new QAction(tr("Emergency Stop All"), this);
+    auto *potionAction = new QAction(QStringLiteral("定时用药…"), this);
+    potionAction->setObjectName("openPotionTimerAction");
+    ui->menuOptions->addAction(potionAction);
+    connect(potionAction, &QAction::triggered, this, [this]() {
+        auto *dialog = findChild<PotionTimerDialog *>();
+        if (!dialog) {
+            dialog = new PotionTimerDialog(m_settings, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        dialog->showNormal(); dialog->raise(); dialog->activateWindow();
+    });
     QAction *libraryAction = new QAction(tr("Custom Action Library…"), this);
     libraryAction->setObjectName("openActionLibraryAction");
     ui->menuOptions->addAction(libraryAction);
@@ -253,6 +288,11 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
 
 void MainWindow::emergencyStopAll()
 {
+    for (auto *potion : findChildren<PotionTimerDialog *>()) potion->stop();
+#ifdef Q_OS_WIN
+    if (HANDLE recorderStop = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Local\\AntiMicroX.ActionRecorder.Stop"))
+    { SetEvent(recorderStop); CloseHandle(recorderStop); }
+#endif
     for (ActionLibraryDialog *library : findChildren<ActionLibraryDialog *>())
         library->stopTrial();
     for (JoyTabWidget *tab : findChildren<JoyTabWidget *>())
@@ -304,8 +344,6 @@ void MainWindow::addOfflineJoystickTab()
 
     if (m_offlineJoystick == nullptr)
     {
-        GameController *offlineController = new GameController(nullptr, 0, m_settings, 0, this);
-
         m_settings->getLock()->lock();
         QString rememberedControllerID = m_settings->value("OfflineControllerID").toString();
         m_settings->beginGroup("Controllers");
@@ -323,11 +361,45 @@ void MainWindow::addOfflineJoystickTab()
                 break;
             }
         }
+        const QString profilePath = m_settings->value(
+            QString("Controller%1LastSelected").arg(rememberedControllerID)).toString();
         m_settings->endGroup();
         m_settings->getLock()->unlock();
 
-        offlineController->setOfflineUniqueID(rememberedControllerID);
-        m_offlineJoystick = offlineController;
+        // Raw DInput profiles must retain their joystick schema and button numbering offline.
+        QFile profile(profilePath);
+        bool rawJoystick = false;
+        int buttons = 32, axes = 8, hats = 4;
+        if (profile.open(QIODevice::ReadOnly))
+        {
+            QXmlStreamReader xml(&profile);
+            rawJoystick = xml.readNextStartElement() && xml.name() == QStringLiteral("joystick");
+            while (rawJoystick && !xml.atEnd())
+            {
+                xml.readNext();
+                if (!xml.isStartElement()) continue;
+                const QString name = xml.name().toString();
+                const auto attributes = xml.attributes();
+                const int index = attributes.value("index").toInt();
+                if (name == "button" || name == "buttonname") buttons = qMax(buttons, index);
+                if (name == "axis" || name == "axisname") axes = qMax(axes, index);
+                if (name == "dpad" || name == "dpadname") hats = qMax(hats, index);
+                if (name == "stickAxisAssociation")
+                    axes = qMax(axes, qMax(attributes.value("xAxis").toInt(), attributes.value("yAxis").toInt()));
+            }
+        }
+        if (rawJoystick)
+        {
+            auto *offline = new Joystick(nullptr, 0, m_settings, this, buttons, axes, hats);
+            offline->setOfflineUniqueID(rememberedControllerID);
+            m_offlineJoystick = offline;
+        }
+        else
+        {
+            auto *offline = new GameController(nullptr, 0, m_settings, 0, this);
+            offline->setOfflineUniqueID(rememberedControllerID);
+            m_offlineJoystick = offline;
+        }
     }
 
     JoyTabWidget *tabwidget = new JoyTabWidget(m_offlineJoystick, m_settings, this);
@@ -474,6 +546,7 @@ void MainWindow::makeJoystickTabs()
         ui->tabWidget->setCurrentIndex(0);
         ui->stackedWidget->setCurrentIndex(1);
     }
+    hideEmptyDeviceTabs(ui->tabWidget);
 }
 
 void MainWindow::fillButtonsID(InputDevice *joystick)
@@ -548,6 +621,7 @@ void MainWindow::fillButtonsMap(QMap<SDL_JoystickID, InputDevice *> *joysticks)
     ui->actionUpdate_Joysticks->setEnabled(true);
     ui->actionHide->setEnabled(true);
     ui->actionQuit->setEnabled(true);
+    hideEmptyDeviceTabs(ui->tabWidget);
 }
 
 // Intermediate slot to be used in Form Designer
@@ -1597,6 +1671,7 @@ void MainWindow::testMappingUpdateNow(int index, InputDevice *device)
         connect(tabwidget, &JoyTabWidget::joystickConfigChanged, this, &MainWindow::populateTrayIcon);
         populateTrayIcon();
     }
+    hideEmptyDeviceTabs(ui->tabWidget);
 }
 
 void MainWindow::removeJoyTab(SDL_JoystickID deviceID)
@@ -1641,6 +1716,7 @@ void MainWindow::removeJoyTab(SDL_JoystickID deviceID)
     {
         addOfflineJoystickTab();
     }
+    hideEmptyDeviceTabs(ui->tabWidget);
 }
 
 void MainWindow::addJoyTab(InputDevice *device)
@@ -1678,6 +1754,7 @@ void MainWindow::addJoyTab(InputDevice *device)
     }
 
     ui->stackedWidget->setCurrentIndex(1);
+    hideEmptyDeviceTabs(ui->tabWidget);
 }
 
 void MainWindow::autoprofileLoad(AutoProfileInfo *info)

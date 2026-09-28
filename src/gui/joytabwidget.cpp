@@ -499,6 +499,15 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
         tr("Show always-on-top Start and Stop buttons for use while a game is open."));
     horizontalLayout_3->addWidget(alternatingSuitesPopupButton);
 
+    auto *autoBuffButton = new QPushButton(QStringLiteral("auto buff"), this);
+    autoBuffButton->setObjectName("autoBuffButton");
+    autoBuffButton->setToolTip(QStringLiteral("选择药水和按键，自动定时补用增益药水"));
+    horizontalLayout_3->addWidget(autoBuffButton);
+    connect(autoBuffButton, &QPushButton::clicked, this, [this]() {
+        if (auto *action = window()->findChild<QAction *>("openPotionTimerAction"))
+            action->trigger();
+    });
+
     QSpacerItem *horizontalSpacer_2 = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     horizontalLayout_3->addItem(horizontalSpacer_2);
@@ -1046,6 +1055,13 @@ void JoyTabWidget::changeJoyConfig(int index)
 
 void JoyTabWidget::saveSettings()
 {
+    // Auxiliary HID interfaces may share the real controller's persistent ID.
+    // They must never load or overwrite its profile selection.
+    if (m_joystick->getNumberRawButtons() <= 0 && m_joystick->getNumberRawAxes() <= 0 &&
+        m_joystick->getNumberRawHats() <= 0 && !m_joystick->hasSensor(ACCELEROMETER) &&
+        !m_joystick->hasSensor(GYROSCOPE))
+        return;
+
     qInfo() << "Saving config settings: " << configBox->currentText() << " for controller: " << m_joystick->getSDLName();
     QString filename = "";
     QString lastfile = "";
@@ -1170,6 +1186,13 @@ void JoyTabWidget::saveSettings()
 
 void JoyTabWidget::loadSettings(bool forceRefresh)
 {
+    // Auxiliary HID interfaces may share the real controller's persistent ID.
+    // They must never load or overwrite its profile selection.
+    if (m_joystick->getNumberRawButtons() <= 0 && m_joystick->getNumberRawAxes() <= 0 &&
+        m_joystick->getNumberRawHats() <= 0 && !m_joystick->hasSensor(ACCELEROMETER) &&
+        !m_joystick->hasSensor(GYROSCOPE))
+        return;
+
     qInfo() << "Loading device settings for: " << m_joystick->getSDLName();
     disconnect(configBox, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this,
                &JoyTabWidget::changeJoyConfig);

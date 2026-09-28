@@ -36,7 +36,8 @@ class Joystick : public InputDevice
     Q_OBJECT
 
   public:
-    explicit Joystick(SDL_Joystick *joyhandle, int deviceIndex, AntiMicroSettings *settings, QObject *parent);
+    explicit Joystick(SDL_Joystick *joyhandle, int deviceIndex, AntiMicroSettings *settings, QObject *parent,
+                      int offlineButtons = 32, int offlineAxes = 8, int offlineHats = 4);
 
     virtual QString getName() override;
     virtual QString getSDLName() override;
@@ -61,7 +62,11 @@ class Joystick : public InputDevice
     SDL_Joystick *getJoyhandle() const;
     virtual QString getXmlName() const override;
 
+    void setOfflineUniqueID(const QString &id) { m_offlineUniqueID = id; }
+
   private:
+    QString m_offlineUniqueID = QStringLiteral("OfflineJoystick");
+    int m_offlineButtons, m_offlineAxes, m_offlineHats;
     SDL_Joystick *m_joyhandle;
     SDL_GameController *controller;
     SDL_JoystickID joystickID;

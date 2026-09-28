@@ -1023,7 +1023,10 @@ void AdvanceButtonDialog::insertKindOfSlot(QListWidgetItem *item, int slotProper
             delaySlot->setUseRandomDelay(ui->randomDelayCheckBox->isChecked());
             delaySlot->setRandomDelayMinimum(ui->randomDelayMinimumSpinBox->value());
             delaySlot->setRandomDelayMaximum(ui->randomDelayMaximumSpinBox->value());
-            commitDelaySlot(tempbutton, index);
+            // Inserting/replacing a slot must create the delay assignment first;
+            // updateAssignedDelaySlot only accepts an existing delay.
+            QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button),
+                                      Q_ARG(JoyButtonSlot *, delaySlot), Q_ARG(int, index));
         } else
         {
             QMetaObject::invokeMethod(&helper, "setAssignedSlot", synchronousConnectionType(m_button), Q_ARG(int, actionTime),

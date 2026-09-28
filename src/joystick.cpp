@@ -28,12 +28,14 @@
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 
-Joystick::Joystick(SDL_Joystick *joyhandle, int deviceIndex, AntiMicroSettings *settings, QObject *parent)
+Joystick::Joystick(SDL_Joystick *joyhandle, int deviceIndex, AntiMicroSettings *settings, QObject *parent,
+                   int offlineButtons, int offlineAxes, int offlineHats)
     : InputDevice(joyhandle, deviceIndex, settings, parent)
+    , m_offlineButtons(offlineButtons), m_offlineAxes(offlineAxes), m_offlineHats(offlineHats)
 {
     m_joyhandle = joyhandle;
-    controller = SDL_GameControllerOpen(deviceIndex);
-    joystickID = SDL_JoystickInstanceID(joyhandle);
+    controller = joyhandle != nullptr ? SDL_GameControllerOpen(deviceIndex) : nullptr;
+    joystickID = joyhandle != nullptr ? SDL_JoystickInstanceID(joyhandle) : -1;
 
     for (int i = 0; i < GlobalVariables::InputDevice::NUMBER_JOYSETS; i++)
     {
@@ -137,6 +139,8 @@ QString Joystick::getProductVersion() const
 
 QString Joystick::getUniqueIDString() const
 {
+    if (m_joyhandle == nullptr)
+        return m_offlineUniqueID;
     return (getGUIDString() + getVendorString() + getProductIDString()) + getSerialString();
 }
 
@@ -150,19 +154,19 @@ void Joystick::closeSDLDevice()
 
 int Joystick::getNumberRawButtons()
 {
-    int numbuttons = SDL_JoystickNumButtons(m_joyhandle);
+    int numbuttons = m_joyhandle != nullptr ? SDL_JoystickNumButtons(m_joyhandle) : m_offlineButtons;
     return numbuttons;
 }
 
 int Joystick::getNumberRawAxes()
 {
-    int numaxes = SDL_JoystickNumAxes(m_joyhandle);
+    int numaxes = m_joyhandle != nullptr ? SDL_JoystickNumAxes(m_joyhandle) : m_offlineAxes;
     return numaxes;
 }
 
 int Joystick::getNumberRawHats()
 {
-    int numhats = SDL_JoystickNumHats(m_joyhandle);
+    int numhats = m_joyhandle != nullptr ? SDL_JoystickNumHats(m_joyhandle) : m_offlineHats;
     return numhats;
 }
 
