@@ -1,4 +1,4 @@
-// Windows recorder companion. Recordings are embedded in ordinary AntiMicroX execute actions.
+﻿// Windows recorder companion. Recordings are embedded in ordinary AntiMicroX execute actions.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -111,6 +111,13 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] internal static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] internal static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] internal static extern uint MapVirtualKey(uint code, uint mapType);
+    internal static KeyInput KeyboardInput(int code, bool released)
+    {
+        uint scan = MapVirtualKey((uint)code, 4);
+        bool extended = (scan & 0xff00) == 0xe000 || code == 163 || code == 165 || (code >= 33 && code <= 46) || code == 91 || code == 92 || code == 111;
+        return new KeyInput { Vk=(ushort)code, Scan=(ushort)(scan & 0xff), Flags=(released ? 2u : 0u) | (extended ? 1u : 0u) };
+    }
 }
 public sealed class RecorderForm : Form
 {
@@ -130,6 +137,8 @@ public sealed class RecorderForm : Form
     IntPtr keyboard, mouse, target;
     Recording recording;
     bool capturing, playing, armed, startRecording;
+    public int PlaybackExitCode = 1;
+    public string CancellationFile;
     int index, completed, count, lastMove, lastX, lastY;
     long passStart;
     Native.Point origin;
@@ -154,14 +163,20 @@ public sealed class RecorderForm : Form
         Controls.Add(timeline); Controls.Add(controls); Controls.Add(stop); Controls.Add(status);
         timer.Tick += Tick; timer.Start();
         FormClosing += delegate { Stop("已停止。"); };
-        status.Text = "F8 开始 / 结束录制，F9 循环，F10 停止。开始前有 3 秒切换窗口。\n请录制完整一轮并返回起始页面；默认只执行 1 次。";
-        if (loaded != null) { name.Text = loaded.Name; repeats.Value = loaded.Repeats; gap.Value = loaded.Gap; ShowTimeline(); }
+        status.Text = "F8 开始 / 结束录制，F9 循环，F10 停止。开始前有 3 秒切换窗口。\n手柄按钮映射为 F8 即可开始 / 结束录制；映射为 F10 可停止。录制完整一轮，默认执行 1 次。";
+        if (loaded != null) { ShowInTaskbar=false; WindowState=FormWindowState.Minimized; PlaybackLog("Loaded action: "+loaded.Name+"; duration_ms="+loaded.Duration); name.Text = loaded.Name; repeats.Value = loaded.Repeats; gap.Value = loaded.Gap; ShowTimeline(); }
         Shown += delegate {
             bool okay = true;
             for (int i = 0; i < 3; ++i) okay &= Native.RegisterHotKey(Handle, 80+i, 0x4000, (uint)(119+i));
             if (!okay) status.Text = "部分 F8 / F9 / F10 快捷键已被占用。可使用窗口按钮；运行时仍可按 F10 停止。";
             if (loaded != null) Arm(false, false);
         };
+    }
+    protected override bool ShowWithoutActivation { get { return launchedForPlayback; } }
+    void PlaybackLog(string message)
+    {
+        if (!launchedForPlayback) return;
+        try { string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AntiMicroX-RandomTurbo"); Directory.CreateDirectory(folder); File.AppendAllText(Path.Combine(folder,"playback.log"),DateTime.UtcNow.ToString("o")+" pid="+Process.GetCurrentProcess().Id+" "+message+Environment.NewLine); } catch { }
     }
     void AddButton(string text, Action action)
     { var b = new Button { Text = text, AutoSize = true }; b.Click += delegate { action(); }; controls.Controls.Add(b); }
@@ -216,11 +231,16 @@ public sealed class RecorderForm : Form
     {
         try
         {
-            if (externalStop.WaitOne(0)) { Stop("已通过 AntiMicroX 停止。"); return; }
+            if ((!String.IsNullOrEmpty(CancellationFile) && File.Exists(CancellationFile)) || externalStop.WaitOne(0)) { Stop("已通过 AntiMicroX 停止。"); return; }
             if ((armed || capturing || playing) && Native.GetAsyncKeyState(121) < 0) { Stop("已通过 F10 停止。"); return; }
             if (armed)
             {
                 if (clock.ElapsedMilliseconds < 3000) { status.Text = String.Format("{0} 秒后开始，请切换到目标窗口。", 3-clock.ElapsedMilliseconds/1000); return; }
+                if (launchedForPlayback) {
+                    uint foregroundPid; Native.GetWindowThreadProcessId(Native.GetForegroundWindow(),out foregroundPid);
+                    bool gameReady=false; try { gameReady=foregroundPid!=0 && Process.GetProcessById((int)foregroundPid).ProcessName==recording.ProcessName; } catch { }
+                    if (!gameReady) { if (clock.ElapsedMilliseconds>=15000) Stop("等待目标游戏超时，请保持游戏在前台。"); return; }
+                }
                 ReadTarget();
                 for (int k = 1; k <= 255; ++k)
                     if (k != 119 && k != 120 && k != 121 && Native.GetAsyncKeyState(k) < 0)
@@ -234,7 +254,7 @@ public sealed class RecorderForm : Form
                     if (keyboard == IntPtr.Zero || mouse == IntPtr.Zero) throw new Exception("无法开启录制，请检查程序权限。");
                     capturing = true;
                 }
-                else { RecordingCodec.Validate(recording); playing = true; }
+                else { RecordingCodec.Validate(recording); playing = true; PlaybackLog("Playback started; target="+recording.ProcessName); }
             }
             if (!(capturing || playing)) return;
             if (!TargetUnchanged()) { Stop("目标窗口切换、移动或尺寸变化，已停止。"); return; }
@@ -257,7 +277,7 @@ public sealed class RecorderForm : Form
             {
                 if (elapsed < recording.Duration + (int)gap.Value && completed + 1 < count) return;
                 ++completed;
-                if (completed >= count) { Stop(String.Format("已执行 {0} 轮操作。请在游戏中核对实际成功次数。", completed)); return; }
+                if (completed >= count) { PlaybackExitCode = 0; Stop(String.Format("已执行 {0} 轮操作。请在游戏中核对实际成功次数。", completed)); return; }
                 index = 0; passStart = clock.ElapsedMilliseconds;
             }
         }
@@ -268,7 +288,7 @@ public sealed class RecorderForm : Form
         if (code >= 0 && capturing)
         {
             var k = (Native.Key)Marshal.PtrToStructure(data, typeof(Native.Key));
-            if ((k.Flags & 0x10) == 0 && !(k.Vk >= 119 && k.Vk <= 121))
+            if (!(k.Vk >= 119 && k.Vk <= 121))
             {
                 bool down = message.ToInt32() == 0x100 || message.ToInt32() == 0x104;
                 if (TargetUnchanged()) Add(new RecordedEvent { Kind = down ? 0 : 1, Code = (int)k.Vk });
@@ -315,9 +335,7 @@ public sealed class RecorderForm : Form
     void Send(RecordedEvent e)
     {
         var input = new Native.Input();
-        if (e.Kind <= 1) { input.Type=1; input.U.Key.Vk=(ushort)e.Code; input.U.Key.Flags=e.Kind==1 ? 2u : 0u;
-            if (e.Code == 163 || e.Code == 165 || (e.Code >= 33 && e.Code <= 46) || e.Code == 91 || e.Code == 92 || e.Code == 111)
-                input.U.Key.Flags |= 1; }
+        if (e.Kind <= 1) { input.Type=1; input.U.Key=Native.KeyboardInput(e.Code, e.Kind==1); }
         else
         {
             int left=Native.GetSystemMetrics(76), top=Native.GetSystemMetrics(77), width=Native.GetSystemMetrics(78), height=Native.GetSystemMetrics(79);
@@ -338,6 +356,7 @@ public sealed class RecorderForm : Form
     void Stop(string message)
     {
         bool closeAfterStop=launchedForPlayback && (playing || armed);
+        if(closeAfterStop) PlaybackLog(message+"; event_index="+index);
         if (keyboard != IntPtr.Zero) Native.UnhookWindowsHookEx(keyboard);
         if (mouse != IntPtr.Zero) Native.UnhookWindowsHookEx(mouse);
         keyboard=mouse=IntPtr.Zero;
@@ -352,8 +371,7 @@ public sealed class RecorderForm : Form
             {
                 // Releases never reposition the cursor after a focus change.
                 var input=new Native.Input();
-                if (k<256) { input.Type=1; input.U.Key.Vk=(ushort)k; input.U.Key.Flags=2;
-                    if(k==163 || k==165 || (k>=33 && k<=46) || k==91 || k==92 || k==111) input.U.Key.Flags |= 1; }
+                if (k<256) { input.Type=1; input.U.Key=Native.KeyboardInput(k, true); }
                 else { uint[] flags={0,4,16,64,256,256}; input.U.Mouse.Flags=flags[k-256]; if(k-256>=4) input.U.Mouse.Data=(uint)(k-259); }
                 Native.SendInput(1,new[]{input},Marshal.SizeOf(typeof(Native.Input)));
             }
@@ -415,14 +433,17 @@ internal static class Program
             bool owner;
             using(var mutex=new Mutex(true,"Local\\AntiMicroX.ActionRecorder",out owner))
             {
-                if(!owner) return 0;
+                if(!owner) return 2;
                 Native.SetProcessDPIAware(); Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
                 string library=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AntiMicroX-RandomTurbo","actions");
                 Recording loaded=null;
                 if(args.Length==2 && args[0]=="--library") library=Path.GetFullPath(args[1]);
-                else if(args.Length==2 && args[0]=="--play") loaded=RecordingCodec.Decode(args[1]);
+                else if((args.Length==2 || args.Length==4 || args.Length==6) && args[0]=="--play") {
+                    loaded=RecordingCodec.Decode(args[1]);
+                    if(args.Length>=4) { if(args[2]!="--repeats") throw new Exception("参数无效。"); loaded.Repeats=Int32.Parse(args[3]); RecordingCodec.Validate(loaded); }
+                }
                 else if(args.Length!=0) throw new Exception("参数无效。");
-                Application.Run(new RecorderForm(library,loaded));
+                using(var form=new RecorderForm(library,loaded)) { if(args.Length==6) { if(args[4]!="--cancel-file") throw new Exception("参数无效。"); form.CancellationFile=args[5]; } Application.Run(form); if(loaded!=null) return form.PlaybackExitCode; }
             }
             return 0;
         }
@@ -432,6 +453,9 @@ internal static class Program
     }
     static void SelfTest()
     {
+        if (Marshal.SizeOf(typeof(Native.Input)) != (IntPtr.Size == 8 ? 40 : 28)) throw new Exception("Incorrect INPUT layout");
+        var q=Native.KeyboardInput(81,false); var left=Native.KeyboardInput(37,true);
+        if(q.Scan!=0x10 || q.Flags!=0 || left.Scan!=0x4b || left.Flags!=3) throw new Exception("Keyboard scan mapping failed");
         var r=new Recording { ProcessName="test",Width=800,Height=600,Duration=400,Repeats=1000 };
         r.Events.Add(new RecordedEvent { T=0,Kind=0,Code=65 });
         r.Events.Add(new RecordedEvent { T=100,Kind=2,Code=1,X=40,Y=50 });

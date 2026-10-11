@@ -51,6 +51,8 @@ class JoyButton;
  *
  * It is visible in main window of application.
  */
+class QProcess;
+
 class JoyTabWidget : public QWidget
 {
     Q_OBJECT
@@ -240,12 +242,21 @@ class JoyTabWidget : public QWidget
     QString alternatingFirstButtonId;
     QString alternatingSecondButtonId;
     QString alternatingThirdButtonId;
+    QString alternatingFourthButtonId;
     int alternatingFirstMinimum = 20000;
     int alternatingFirstMaximum = 20000;
     int alternatingSecondMinimum = 15000;
     int alternatingSecondMaximum = 15000;
     int alternatingThirdMinimum = 10000;
+    int alternatingFourthMinimum = 10000;
     int alternatingThirdMaximum = 10000;
+    int alternatingFourthMaximum = 10000;
+    int alternatingRepeats[4] = {0, 0, 0, 0};
+    QProcess *alternatingRecordingProcess = nullptr;
+    bool startAlternatingAssignment(int index);
+    QString recordedAssignmentPayload(JoyButton *button) const;
+    int alternatingWaits[4] = {0, 0, 0, 0};
+    bool alternatingWaiting = false;
     bool alternatingSuitesActive = false;
     int alternatingActiveSuiteIndex = -1;
     QTimer *alternatingSuitesTimer;

@@ -59,30 +59,36 @@ void SetJoystickXml::readConfig(QXmlStreamReader *xml)
             {
                 int index = xml->attributes().value("index").toString().toInt();
                 JoyButton *button = m_setJoystick->getJoyButton(index - 1);
-                joyButtonXml = new JoyButtonXml(button);
 
                 if (button != nullptr)
-                    joyButtonXml->readConfig(xml);
+                {
+                    JoyButtonXml parser(button);
+                    parser.readConfig(xml);
+                }
                 else
                     xml->skipCurrentElement();
             } else if ((xml->name().toString() == "axis") && xml->isStartElement())
             {
                 int index = xml->attributes().value("index").toString().toInt();
                 JoyAxis *axis = m_setJoystick->getJoyAxis(index - 1);
-                joyAxisXml = new JoyAxisXml(axis);
 
                 if (axis != nullptr)
-                    joyAxisXml->readConfig(xml);
+                {
+                    JoyAxisXml parser(axis);
+                    parser.readConfig(xml);
+                }
                 else
                     xml->skipCurrentElement();
             } else if ((xml->name().toString() == "dpad") && xml->isStartElement())
             {
                 int index = xml->attributes().value("index").toString().toInt();
                 JoyDPad *dpad = m_setJoystick->getJoyDPad(index - 1);
-                JoyDPadXml<JoyDPad> *joydpadXml = new JoyDPadXml<JoyDPad>(dpad);
 
                 if (dpad != nullptr)
-                    joydpadXml->readConfig(xml);
+                {
+                    JoyDPadXml<JoyDPad> parser(dpad);
+                    parser.readConfig(xml);
+                }
                 else
                     xml->skipCurrentElement();
             } else if ((xml->name().toString() == "stick") && xml->isStartElement())
@@ -115,10 +121,12 @@ void SetJoystickXml::readConfig(QXmlStreamReader *xml)
             {
                 int index = xml->attributes().value("index").toString().toInt();
                 VDPad *vdpad = m_setJoystick->getVDPad(index - 1);
-                JoyDPadXml<VDPad> *joydpadXml = new JoyDPadXml<VDPad>(vdpad);
 
                 if (vdpad != nullptr)
-                    joydpadXml->readConfig(xml);
+                {
+                    JoyDPadXml<VDPad> parser(vdpad);
+                    parser.readConfig(xml);
+                }
                 else
                     xml->skipCurrentElement();
             } else if ((xml->name().toString() == "name") && xml->isStartElement())

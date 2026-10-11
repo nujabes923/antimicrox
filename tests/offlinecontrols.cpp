@@ -12,6 +12,8 @@
 #include "logger.h"
 #include "xmlconfigwriter.h"
 #include "xml/inputdevicexml.h"
+#include "xml/setjoystickxml.h"
+#include <QXmlStreamReader>
 #include "mainwindow.h"
 #include "commandlineutility.h"
 #include "actionlibrary.h"
@@ -20,7 +22,6 @@
 #include <QKeySequenceEdit>
 #include <QKeyEvent>
 #include <QRadioButton>
-#include <QSpinBox>
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QTableWidget>
@@ -28,6 +29,7 @@
 #include <qt_windows.h>
 #include "setjoystick.h"
 #include <QApplication>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QEventLoop>
 #include <QFile>
@@ -361,6 +363,14 @@ int main(int argc, char **argv)
         editor.clearAllSlots();
     }
     first->setAssignedSlot(0x41, JoyButtonSlot::JoyKeyboard);
+    {
+        QXmlStreamReader xml(QStringLiteral("<set><axis index='999'/><button index='999'/><dpad index='999'/><vdpad index='999'/><name>missing-input-regression</name></set>"));
+        require(xml.readNextStartElement(), "read missing-input fixture");
+        SetJoystickXml parser(controller.getActiveSetJoystick());
+        parser.readConfig(&xml);
+        require(!xml.hasError() && controller.getActiveSetJoystick()->getName() == "missing-input-regression",
+                "missing profile axes and inputs skipped without crashing; subsequent fields restored");
+    }
     const QString group = "AlternatingSuites/regression-offline/Set1/";
     settings.setValue(group + "FirstButton", "button/0");
     settings.setValue(group + "SecondButton", "button/1");
@@ -425,6 +435,42 @@ int main(int argc, char **argv)
     pump();
     require(!first->getButtonState() && !second->getButtonState(), "closing offline tab releases keys");
     require(factory.recorder()->presses == factory.recorder()->releases, "no keys left held after closing tab");
+    {
+        JoyButton *third = controller.getActiveSetJoystick()->getJoyButton(2);
+        JoyButton *fourth = controller.getActiveSetJoystick()->getJoyButton(3);
+        require(third && fourth, "four-group fixtures available");
+        third->clearSlotsEventReset(); third->setToggle(false);
+        fourth->clearSlotsEventReset(); fourth->setToggle(false);
+        third->setAssignedSlot(0x43, JoyButtonSlot::JoyKeyboard);
+        fourth->setAssignedSlot(0x44, JoyButtonSlot::JoyKeyboard);
+        settings.setValue(group + "ThirdButton", "button/2");
+        settings.setValue(group + "FourthButton", "button/3");
+        for (const QString &key : {"FirstMinimum", "FirstMaximum", "SecondMinimum", "SecondMaximum", "ThirdMinimum", "ThirdMaximum", "FourthMinimum", "FourthMaximum"})
+            settings.setValue(group + key, 3000);
+        for (int i = 1; i <= 4; ++i) settings.setValue(group + QString("WaitAfter%1").arg(i), 1000);
+        JoyTabWidget tab(&controller, &settings);
+        auto *start = tab.findChild<QPushButton *>("alternatingSuitesStartButton");
+        start->click(); pump(30);
+        QList<JoyButton *> suites{first, second, third, fourth};
+        for (int phase = 0; phase < 5; ++phase)
+        {
+            for (int i = 0; i < suites.size(); ++i)
+                require(suites.at(i)->getButtonState() == (i == phase % 4), "four suites run in order without overlap");
+            require(QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout"), "enter inter-set wait");
+            pump(30);
+            for (JoyButton *button : suites) require(!button->getButtonState(), "no group holds keys during wait");
+            require(QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout"), "advance after inter-set wait");
+            pump(30);
+        }
+        require(QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout"), "enter wait before stopping");
+        pump(30);
+        start->click(); pump(30);
+        pump(1100);
+        for (JoyButton *button : suites) require(!button->getButtonState(), "four-group stop releases all suites");
+        require(factory.recorder()->presses == factory.recorder()->releases, "four-group output balanced after stop");
+        settings.setValue(group + "ThirdButton", ""); settings.setValue(group + "FourthButton", "");
+        for (int i = 1; i <= 4; ++i) settings.setValue(group + QString("WaitAfter%1").arg(i), 0);
+    }
     {
         const QString profile = temporary.filePath("profile.amgp");
         require(QFile::copy("user-config/maple-max.gamecontroller.amgp", profile), "copy profile fixture");
@@ -493,6 +539,26 @@ int main(int argc, char **argv)
                     button->getAssignedSlots()->first()->getSlotMode() == JoyButtonSlot::JoyExecute &&
                     button->getAssignedSlots()->first()->getExtraData().toString().startsWith("--play "),
                     "recorded action preserves executable and embedded playback data");
+            auto *other = controller.getActiveSetJoystick()->getJoyButton(1);
+            other->setAssignedSlot(65, JoyButtonSlot::JoyKeyboard);
+            {
+                JoyTabWidget tab(&controller, &settings);
+                QTimer::singleShot(0, [&]() {
+                    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    require(dialog != nullptr, "alternate dialog opens for recorded action");
+                    auto *count = dialog->findChild<QSpinBox *>("alternateRepeatCount1");
+                    require(count && count->isEnabled(), "recorded action enables repeat count");
+                    count->setValue(3);
+                    auto *ordinary = dialog->findChild<QSpinBox *>("alternateRepeatCount2");
+                    require(ordinary && !ordinary->isEnabled(), "ordinary keyboard action retains duration mode");
+                    dialog->accept();
+                });
+                require(QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog"), "open alternate setup");
+                require(settings.value(QString("AlternatingSuites/%1/Set%2/RepeatCount1")
+                    .arg(controller.getUniqueIDString()).arg(controller.getActiveSetNumber()+1)).toInt()==3,
+                    "alternate recording repeat count is persisted");
+            }
+            other->clearSlotsEventReset();
             button->clearSlotsEventReset();
         }
         LibraryAction action;

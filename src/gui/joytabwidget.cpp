@@ -56,6 +56,15 @@
 #include <algorithm>
 
 #include <QAction>
+#include <QProcess>
+#include <QUuid>
+#include <QFile>
+#include <QSpinBox>
+#include <QXmlStreamReader>
+#include "actionlibrary.h"
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
@@ -583,8 +592,10 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
 
 JoyTabWidget::~JoyTabWidget()
 {
+    QProcess *recordingProcess = alternatingRecordingProcess;
     if (m_joystick != nullptr)
         setAlternatingSuiteRunning(false);
+    if (recordingProcess) recordingProcess->waitForFinished(1500);
     if (alternatingSuitesPopup != nullptr)
     {
         if (m_settings != nullptr)
@@ -1617,12 +1628,19 @@ void JoyTabWidget::loadAlternatingSuiteSettings()
     alternatingFirstButtonId = m_settings->value("FirstButton", buttons.at(0).first).toString();
     alternatingSecondButtonId = m_settings->value("SecondButton", buttons.at(1).first).toString();
     alternatingThirdButtonId = m_settings->value("ThirdButton", "").toString();
+    alternatingFourthButtonId = m_settings->value("FourthButton", "").toString();
     alternatingFirstMinimum = m_settings->value("FirstMinimum", 20000).toInt();
     alternatingFirstMaximum = m_settings->value("FirstMaximum", 20000).toInt();
     alternatingSecondMinimum = m_settings->value("SecondMinimum", 15000).toInt();
     alternatingSecondMaximum = m_settings->value("SecondMaximum", 15000).toInt();
     alternatingThirdMinimum = m_settings->value("ThirdMinimum", 10000).toInt();
+    alternatingFourthMinimum = m_settings->value("FourthMinimum", 10000).toInt();
     alternatingThirdMaximum = m_settings->value("ThirdMaximum", 10000).toInt();
+    alternatingFourthMaximum = m_settings->value("FourthMaximum", 10000).toInt();
+    for (int i = 0; i < 4; ++i)
+        alternatingRepeats[i] = qBound(0, m_settings->value(QString("RepeatCount%1").arg(i + 1), 0).toInt(), 1000);
+    for (int i = 0; i < 4; ++i)
+        alternatingWaits[i] = qBound(0, m_settings->value(QString("WaitAfter%1").arg(i + 1), 0).toInt(), 600000);
     m_settings->endGroup();
     m_settings->getLock()->unlock();
 }
@@ -1636,6 +1654,8 @@ QStringList JoyTabWidget::configuredAlternatingSuiteIds() const
         ids.append(alternatingSecondButtonId);
     if (!alternatingThirdButtonId.isEmpty())
         ids.append(alternatingThirdButtonId);
+    if (!alternatingFourthButtonId.isEmpty())
+        ids.append(alternatingFourthButtonId);
     return ids;
 }
 
@@ -1651,11 +1671,64 @@ int JoyTabWidget::alternatingSuiteInterval(int suiteIndex) const
     {
         minimum = alternatingThirdMinimum;
         maximum = alternatingThirdMaximum;
+    } else if (suiteIndex == 3)
+    {
+        minimum = alternatingFourthMinimum;
+        maximum = alternatingFourthMaximum;
     }
 
     const int low = qMax(100, qMin(minimum, maximum));
     const int high = qMax(low, qMax(minimum, maximum));
     return QRandomGenerator::global()->bounded(low, high + 1);
+}
+
+QString JoyTabWidget::recordedAssignmentPayload(JoyButton *button) const
+{
+    if (!button) return {};
+    QXmlStreamReader xml(ActionLibrary::snapshot(button));
+    int slotCount = 0; QString path, arguments, mode;
+    while (!xml.atEnd()) {
+        xml.readNext(); if (!xml.isStartElement()) continue;
+        if (xml.name() == QStringLiteral("slot")) ++slotCount;
+        else if (xml.name() == QStringLiteral("path")) path = xml.readElementText();
+        else if (xml.name() == QStringLiteral("arguments")) arguments = xml.readElementText();
+        else if (xml.name() == QStringLiteral("mode")) mode = xml.readElementText();
+    }
+    if (xml.hasError() || slotCount != 1 || mode != "execute" || QFileInfo(path).fileName().compare("ActionRecorder.exe", Qt::CaseInsensitive) != 0 || !arguments.startsWith("--play ")) return {};
+    return arguments.mid(7).trimmed();
+}
+
+bool JoyTabWidget::startAlternatingAssignment(int index)
+{
+    JoyButton *button = resolveAlternatingSuiteButton(configuredAlternatingSuiteIds().value(index));
+    if (!button) return false;
+    if (alternatingRepeats[index] == 0) {
+        QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, true));
+        alternatingSuitesTimer->start(alternatingSuiteInterval(index)); return true;
+    }
+    const QString payload = recordedAssignmentPayload(button);
+    if (payload.isEmpty()) return false;
+    auto *process = new QProcess(this); alternatingRecordingProcess = process;
+    const QString cancelFile = QDir::temp().filePath("antimicrox-recording-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    process->setProperty("cancellationFile", cancelFile);
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
+        if (alternatingRecordingProcess == process) setAlternatingSuiteRunning(false);
+        QFile::remove(process->property("cancellationFile").toString());
+        process->deleteLater();
+    });
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this, process](int code, QProcess::ExitStatus status) {
+        if (alternatingRecordingProcess == process) {
+            alternatingRecordingProcess = nullptr;
+            if (code == 0 && status == QProcess::NormalExit && alternatingSuitesActive) switchAlternatingSuite();
+            else setAlternatingSuiteRunning(false);
+        }
+        QFile::remove(process->property("cancellationFile").toString());
+        process->deleteLater();
+    });
+    process->start(QCoreApplication::applicationDirPath() + "/ActionRecorder.exe",
+                   {"--play", payload, "--repeats", QString::number(alternatingRepeats[index]), "--cancel-file", cancelFile});
+    return true;
 }
 
 void JoyTabWidget::setAlternatingSuiteRunning(bool running)
@@ -1675,8 +1748,17 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     if (suites.size() < 2)
         running = false;
 
+    alternatingWaiting = false;
     if (!running)
     {
+        if (alternatingRecordingProcess) {
+            QFile cancellation(alternatingRecordingProcess->property("cancellationFile").toString());
+            if (cancellation.open(QIODevice::WriteOnly)) cancellation.close();
+            alternatingRecordingProcess = nullptr;
+#ifdef Q_OS_WIN
+            if (HANDLE stop = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Local\\AntiMicroX.ActionRecorder.Stop")) { SetEvent(stop); CloseHandle(stop); }
+#endif
+        }
         alternatingSuitesTimer->stop();
         alternatingDisplayTimer->stop();
         for (JoyButton *button : suites)
@@ -1691,12 +1773,12 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
 
     for (JoyButton *button : suites)
         QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
-    QMetaObject::invokeMethod(suites.first(), "setExternalToggleState", synchronousConnectionType(suites.first()), Q_ARG(bool, true));
+
     alternatingSuitesActive = true;
     alternatingActiveSuiteIndex = 0;
     alternatingSuitesStartButton->setChecked(true);
     alternatingSuitesStartButton->setText(tr("Stop Alternating"));
-    alternatingSuitesTimer->start(alternatingSuiteInterval(0));
+    if (!startAlternatingAssignment(0)) { setAlternatingSuiteRunning(false); return; }
     alternatingDisplayTimer->start();
     updateAlternatingSuitesPopup();
 }
@@ -1725,11 +1807,21 @@ void JoyTabWidget::switchAlternatingSuite()
     }
 
     JoyButton *outgoing = suites.at(alternatingActiveSuiteIndex);
+    if (!alternatingWaiting)
+    {
+        QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
+        const int wait = alternatingWaits[alternatingActiveSuiteIndex];
+        if (wait > 0)
+        {
+            alternatingWaiting = true; alternatingSuitesTimer->start(wait);
+            updateAlternatingSuitesPopup(); return;
+        }
+    }
+    alternatingWaiting = false;
     alternatingActiveSuiteIndex = (alternatingActiveSuiteIndex + 1) % suites.size();
-    JoyButton *incoming = suites.at(alternatingActiveSuiteIndex);
+
     QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
-    QMetaObject::invokeMethod(incoming, "setExternalToggleState", synchronousConnectionType(incoming), Q_ARG(bool, true));
-    alternatingSuitesTimer->start(alternatingSuiteInterval(alternatingActiveSuiteIndex));
+    if (!startAlternatingAssignment(alternatingActiveSuiteIndex)) { setAlternatingSuiteRunning(false); return; }
     updateAlternatingSuitesPopup();
 }
 
@@ -1858,8 +1950,14 @@ void JoyTabWidget::updateAlternatingSuitesPopup()
             return button != nullptr ? button->getPartialName() : ids.value(index);
         };
         const int next = (alternatingActiveSuiteIndex + 1) % ids.size();
+        if (!alternatingWaiting && alternatingRepeats[alternatingActiveSuiteIndex] > 0) {
+            alternatingSuitesPopupStatus->setText(tr("Running %1: %2\nRecording repeats: %3\nNext %4: %5")
+                .arg(alternatingActiveSuiteIndex + 1).arg(label(alternatingActiveSuiteIndex))
+                .arg(alternatingRepeats[alternatingActiveSuiteIndex]).arg(next + 1).arg(label(next)));
+            return;
+        }
         alternatingSuitesPopupStatus->setText(
-            tr("Running %1: %2\nRemaining: %3 s\nNext %4: %5")
+            (alternatingWaiting ? tr("Waiting after %1: %2\nRemaining: %3 s\nNext %4: %5") : tr("Running %1: %2\nRemaining: %3 s\nNext %4: %5"))
                 .arg(alternatingActiveSuiteIndex + 1).arg(label(alternatingActiveSuiteIndex))
                 .arg(qMax(0, alternatingSuitesTimer->remainingTime()) / 1000.0, 0, 'f', 1)
                 .arg(next + 1).arg(label(next)));
@@ -1882,8 +1980,8 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     dialog.setWindowTitle(tr("Alternate Assignment Sets"));
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
     QLabel *help = new QLabel(
-        tr("Choose two or three existing assignment sets from buttons, axes, sticks, D-pads, or sensors. They run in "
-           "order and never overlap; each duration is randomly selected again whenever that set starts."),
+        tr("Choose two to four existing assignment sets from buttons, axes, sticks, D-pads, or sensors. They run in "
+           "order and never overlap. Recorded actions can use a repeat count and finish before switching. 0 uses duration."),
         &dialog);
     help->setWordWrap(true);
     layout->addWidget(help);
@@ -1891,7 +1989,9 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     QComboBox *firstCombo = new QComboBox(&dialog);
     QComboBox *secondCombo = new QComboBox(&dialog);
     QComboBox *thirdCombo = new QComboBox(&dialog);
+    QComboBox *fourthCombo = new QComboBox(&dialog);
     thirdCombo->addItem(tr("<Disabled>"), "");
+    fourthCombo->addItem(tr("<Disabled>"), "");
     for (const auto &entry : buttons)
     {
         QString label = entry.second->getPartialName(true, true);
@@ -1901,10 +2001,12 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         firstCombo->addItem(label, entry.first);
         secondCombo->addItem(label, entry.first);
         thirdCombo->addItem(label, entry.first);
+        fourthCombo->addItem(label, entry.first);
     }
     firstCombo->setCurrentIndex(qMax(0, firstCombo->findData(alternatingFirstButtonId)));
     secondCombo->setCurrentIndex(qMax(0, secondCombo->findData(alternatingSecondButtonId)));
     thirdCombo->setCurrentIndex(qMax(0, thirdCombo->findData(alternatingThirdButtonId)));
+    fourthCombo->setCurrentIndex(qMax(0, fourthCombo->findData(alternatingFourthButtonId)));
 
     auto makeSecondsBox = [&dialog](int milliseconds) {
         QDoubleSpinBox *box = new QDoubleSpinBox(&dialog);
@@ -1921,18 +2023,34 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     QDoubleSpinBox *secondMinimum = makeSecondsBox(alternatingSecondMinimum);
     QDoubleSpinBox *secondMaximum = makeSecondsBox(alternatingSecondMaximum);
     QDoubleSpinBox *thirdMinimum = makeSecondsBox(alternatingThirdMinimum);
+    QDoubleSpinBox *fourthMinimum = makeSecondsBox(alternatingFourthMinimum);
     QDoubleSpinBox *thirdMaximum = makeSecondsBox(alternatingThirdMaximum);
+    QDoubleSpinBox *fourthMaximum = makeSecondsBox(alternatingFourthMaximum);
 
+    QDoubleSpinBox *waitBoxes[4];
+    for (int i = 0; i < 4; ++i) {
+        waitBoxes[i] = makeSecondsBox(alternatingWaits[i]);
+        waitBoxes[i]->setMinimum(0.0); waitBoxes[i]->setValue(alternatingWaits[i] / 1000.0);
+        waitBoxes[i]->setObjectName(QString("alternateWaitAfter%1").arg(i + 1));
+        waitBoxes[i]->setToolTip(tr("Release this set, then wait before starting the next set. 0 means no wait."));
+    }
     QFormLayout *form = new QFormLayout();
     form->addRow(tr("Assignment set 1:"), firstCombo);
     form->addRow(tr("Set 1 minimum:"), firstMinimum);
     form->addRow(tr("Set 1 maximum:"), firstMaximum);
+    form->addRow(tr("Wait after set 1:"), waitBoxes[0]);
     form->addRow(tr("Assignment set 2:"), secondCombo);
     form->addRow(tr("Set 2 minimum:"), secondMinimum);
     form->addRow(tr("Set 2 maximum:"), secondMaximum);
+    form->addRow(tr("Wait after set 2:"), waitBoxes[1]);
     form->addRow(tr("Assignment set 3:"), thirdCombo);
     form->addRow(tr("Set 3 minimum:"), thirdMinimum);
     form->addRow(tr("Set 3 maximum:"), thirdMaximum);
+    form->addRow(tr("Wait after set 3:"), waitBoxes[2]);
+    form->addRow(tr("Assignment set 4:"), fourthCombo);
+    form->addRow(tr("Set 4 minimum:"), fourthMinimum);
+    form->addRow(tr("Set 4 maximum:"), fourthMaximum);
+    form->addRow(tr("Wait after set 4:"), waitBoxes[3]);
     layout->addLayout(form);
 
     auto updateThirdControls = [thirdCombo, thirdMinimum, thirdMaximum]() {
@@ -1943,6 +2061,37 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     connect(thirdCombo, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), &dialog,
             [updateThirdControls](int) { updateThirdControls(); });
     updateThirdControls();
+    auto updateFourthControls = [thirdCombo, fourthCombo, fourthMinimum, fourthMaximum]() {
+        const bool thirdEnabled = !thirdCombo->currentData().toString().isEmpty();
+        if (!thirdEnabled) fourthCombo->setCurrentIndex(0);
+        fourthCombo->setEnabled(thirdEnabled);
+        const bool enabled = thirdEnabled && !fourthCombo->currentData().toString().isEmpty();
+        fourthMinimum->setEnabled(enabled); fourthMaximum->setEnabled(enabled);
+    };
+    connect(thirdCombo, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), &dialog, [updateFourthControls](int) { updateFourthControls(); });
+    connect(fourthCombo, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), &dialog, [updateFourthControls](int) { updateFourthControls(); });
+    updateFourthControls();
+    QComboBox *assignmentCombos[] = {firstCombo, secondCombo, thirdCombo, fourthCombo};
+    QDoubleSpinBox *minimumBoxes[] = {firstMinimum, secondMinimum, thirdMinimum, fourthMinimum};
+    QDoubleSpinBox *maximumBoxes[] = {firstMaximum, secondMaximum, thirdMaximum, fourthMaximum};
+    QSpinBox *repeatBoxes[4];
+    for (int i = 0; i < 4; ++i) {
+        repeatBoxes[i] = new QSpinBox(&dialog);
+        repeatBoxes[i]->setRange(0, 1000); repeatBoxes[i]->setSpecialValueText(tr("Use duration"));
+        repeatBoxes[i]->setValue(alternatingRepeats[i]);
+        repeatBoxes[i]->setObjectName(QString("alternateRepeatCount%1").arg(i + 1));
+        form->addRow(tr("Set %1 recording repeats:").arg(i + 1), repeatBoxes[i]);
+        auto update = [this, i, assignmentCombos, minimumBoxes, maximumBoxes, repeatBoxes]() {
+            const bool recorded = !recordedAssignmentPayload(resolveAlternatingSuiteButton(assignmentCombos[i]->currentData().toString())).isEmpty();
+            repeatBoxes[i]->setEnabled(recorded);
+            if (!recorded) repeatBoxes[i]->setValue(0);
+            const bool duration = repeatBoxes[i]->value() == 0 && !assignmentCombos[i]->currentData().toString().isEmpty();
+            minimumBoxes[i]->setEnabled(duration); maximumBoxes[i]->setEnabled(duration);
+        };
+        connect(assignmentCombos[i], qOverload<int>(&QComboBox::currentIndexChanged), &dialog, [update](int) { update(); });
+        connect(repeatBoxes[i], qOverload<int>(&QSpinBox::valueChanged), &dialog, [update](int) { update(); });
+        update();
+    }
 
     QDialogButtonBox *buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -1955,6 +2104,8 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     QStringList selectedIds{firstCombo->currentData().toString(), secondCombo->currentData().toString()};
     if (!thirdCombo->currentData().toString().isEmpty())
         selectedIds.append(thirdCombo->currentData().toString());
+    if (!fourthCombo->currentData().toString().isEmpty())
+        selectedIds.append(fourthCombo->currentData().toString());
     QSet<QString> uniqueIds(selectedIds.begin(), selectedIds.end());
     if (uniqueIds.size() != selectedIds.size())
     {
@@ -1966,12 +2117,15 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     alternatingFirstButtonId = selectedIds.at(0);
     alternatingSecondButtonId = selectedIds.at(1);
     alternatingThirdButtonId = selectedIds.size() > 2 ? selectedIds.at(2) : QString();
+    alternatingFourthButtonId = selectedIds.size() > 3 ? selectedIds.at(3) : QString();
     alternatingFirstMinimum = qRound(firstMinimum->value() * 1000.0);
     alternatingFirstMaximum = qRound(firstMaximum->value() * 1000.0);
     alternatingSecondMinimum = qRound(secondMinimum->value() * 1000.0);
     alternatingSecondMaximum = qRound(secondMaximum->value() * 1000.0);
     alternatingThirdMinimum = qRound(thirdMinimum->value() * 1000.0);
+    alternatingFourthMinimum = qRound(fourthMinimum->value() * 1000.0);
     alternatingThirdMaximum = qRound(thirdMaximum->value() * 1000.0);
+    alternatingFourthMaximum = qRound(fourthMaximum->value() * 1000.0);
 
     if (alternatingFirstMinimum > alternatingFirstMaximum)
         std::swap(alternatingFirstMinimum, alternatingFirstMaximum);
@@ -1979,18 +2133,29 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         std::swap(alternatingSecondMinimum, alternatingSecondMaximum);
     if (alternatingThirdMinimum > alternatingThirdMaximum)
         std::swap(alternatingThirdMinimum, alternatingThirdMaximum);
+    if (alternatingFourthMinimum > alternatingFourthMaximum)
+        std::swap(alternatingFourthMinimum, alternatingFourthMaximum);
 
     m_settings->getLock()->lock();
     m_settings->beginGroup(alternatingSettingsGroup());
     m_settings->setValue("FirstButton", alternatingFirstButtonId);
     m_settings->setValue("SecondButton", alternatingSecondButtonId);
     m_settings->setValue("ThirdButton", alternatingThirdButtonId);
+    m_settings->setValue("FourthButton", alternatingFourthButtonId);
     m_settings->setValue("FirstMinimum", alternatingFirstMinimum);
     m_settings->setValue("FirstMaximum", alternatingFirstMaximum);
     m_settings->setValue("SecondMinimum", alternatingSecondMinimum);
     m_settings->setValue("SecondMaximum", alternatingSecondMaximum);
     m_settings->setValue("ThirdMinimum", alternatingThirdMinimum);
+    m_settings->setValue("FourthMinimum", alternatingFourthMinimum);
     m_settings->setValue("ThirdMaximum", alternatingThirdMaximum);
+    m_settings->setValue("FourthMaximum", alternatingFourthMaximum);
+    for (int i = 0; i < 4; ++i) {
+        alternatingRepeats[i] = repeatBoxes[i]->value();
+        m_settings->setValue(QString("RepeatCount%1").arg(i + 1), alternatingRepeats[i]);
+        alternatingWaits[i] = qRound(waitBoxes[i]->value() * 1000.0);
+        m_settings->setValue(QString("WaitAfter%1").arg(i + 1), alternatingWaits[i]);
+    }
     m_settings->endGroup();
     m_settings->sync();
     m_settings->getLock()->unlock();
