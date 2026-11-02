@@ -34,3 +34,10 @@ GameControllerTriggerButton::GameControllerTriggerButton(JoyAxis *axis, int inde
 }
 
 QString GameControllerTriggerButton::getXmlName() { return GlobalVariables::GameControllerTriggerButton::xmlName; }
+
+QString GameControllerTriggerButton::getPartialName(bool forceFullFormat, bool displayNames) const
+{
+    Q_UNUSED(forceFullFormat);
+    if (!buttonName.isEmpty() && displayNames) return buttonName;
+    return getAxis()->getPartialName(false, displayNames);
+}

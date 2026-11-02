@@ -87,31 +87,10 @@ QString GameControllerTrigger::getXmlName() { return GlobalVariables::GameContro
 
 QString GameControllerTrigger::getPartialName(bool forceFullFormat, bool displayNames)
 {
-    QString label = QString();
-
-    if (!axisName.isEmpty() && displayNames)
-    {
-        label.append(axisName);
-
-        if (forceFullFormat)
-        {
-            label.append(" ").append(tr("Trigger"));
-        }
-    } else if (!defaultAxisName.isEmpty())
-    {
-        label.append(defaultAxisName);
-
-        if (forceFullFormat)
-        {
-            label.append(" ").append(tr("Trigger"));
-        }
-    } else
-    {
-        label.append(tr("Trigger")).append(" ");
-        label.append(QString::number(getRealJoyIndex() - SDL_CONTROLLER_AXIS_TRIGGERLEFT));
-    }
-
-    return label;
+    Q_UNUSED(forceFullFormat);
+    if (!axisName.isEmpty() && displayNames) return axisName;
+    if (!defaultAxisName.isEmpty()) return defaultAxisName;
+    return getIndex() == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? QStringLiteral("LT") : QStringLiteral("RT");
 }
 
 void GameControllerTrigger::correctJoystickThrottle()

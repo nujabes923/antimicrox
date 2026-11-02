@@ -33,6 +33,7 @@ class GameControllerTriggerButton : public JoyAxisButton
     explicit GameControllerTriggerButton(JoyAxis *axis, int index, int originset, SetJoystick *parentSet,
                                          QObject *parent = nullptr);
 
+    QString getPartialName(bool forceFullFormat = false, bool displayNames = false) const override;
     virtual QString getXmlName();
 };
 

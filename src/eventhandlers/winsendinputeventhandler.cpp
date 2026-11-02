@@ -139,6 +139,16 @@ void WinSendInputEventHandler::sendTextEntryEvent(QString maintext)
         for (int i = 0; i < maintext.size(); i++)
         {
             QtWinKeyMapper::charKeyInformation temp = keymapper->getCharKeyInformation(maintext.at(i));
+            if (!temp.virtualkey) {
+                // Characters outside the active keyboard layout (including Chinese).
+                INPUT unicode[2] = {};
+                unicode[0].type = unicode[1].type = INPUT_KEYBOARD;
+                unicode[0].ki.wScan = unicode[1].ki.wScan = maintext.at(i).unicode();
+                unicode[0].ki.dwFlags = KEYEVENTF_UNICODE;
+                unicode[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+                SendInput(2, unicode, sizeof(INPUT));
+                continue;
+            }
             QList<unsigned int> tempList;
 
             if (temp.modifiers != Qt::NoModifier)

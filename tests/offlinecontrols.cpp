@@ -58,6 +58,8 @@ class RecordingHandler : public BaseEventHandler
 public:
     struct KeyEvent { int code; bool down; qint64 time; };
     QList<KeyEvent> keyEvents;
+    QStringList texts;
+    void sendTextEntryEvent(QString text) override { texts.append(text); }
     int presses = 0, releases = 0;
     bool init() override { return true; }
     bool cleanup() override { return true; }
@@ -114,6 +116,89 @@ int main(int argc, char **argv)
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary directory");
     AntiMicroSettings settings(temporary.filePath("settings.ini"), QSettings::IniFormat);
+    if (app.arguments().contains("--pet-notify")) {
+        settings.setValue("AutoShout/Interval", 115); settings.setValue("AutoShout/ManualFirst", false);
+        AutoShoutDialog shout(&settings);
+        auto *period = shout.findChild<QSpinBox *>("shoutInterval");
+        require(period->value() == 120 && period->isReadOnly(), "pet period fixed at 120 seconds");
+        require(shout.findChild<QCheckBox *>("shoutManualFirst")->isChecked(), "pet always waits for first physical flower");
+        shout.findChild<QKeySequenceEdit *>("shoutSkillKey")->setKeySequence(QKeySequence("F7"));
+        qint64 now = 0; bool down = false; PotionTimerDialog::Target focus{42, 100};
+        shout.elapsed = [&]() { return now; }; shout.keyDown = [&](int) { return down; };
+        shout.foreground = [&]() { return focus; };
+        auto advance = [&](qint64 t) { now = t; pump(25); };
+        auto finish = [&](qint64 t) { advance(t + 100); advance(t + 300); advance(t + 500); advance(t + 600); };
+        auto noSkillOutput = [&]() {
+            const int flower = AntKeyMapper::getInstance()->returnVirtualKey(Qt::Key_F7);
+            for (const auto &e : factory.recorder()->keyEvents) require(e.code != flower, "no generated flower key");
+        };
+        shout.start(); advance(500); require(factory.recorder()->presses == 0, "waiting emits no output");
+        down = true; advance(1000); down = false; advance(1100);
+        require(factory.recorder()->presses == 0, "initial physical flower never duplicated");
+        for (int i = 1; i <= 25; ++i) {
+            const qint64 pet = 1000 + i * 120000LL, warning = pet - 5600;
+            advance(warning - 1); require(factory.recorder()->texts.size() == i - 1, "notification never drifts early");
+            advance(warning + 25); advance(warning + 150); advance(warning + 390); advance(warning + 640); advance(warning + 780);
+            require(factory.recorder()->texts.size() == i, "one notification per fixed pet cycle despite variable typing delay");
+            const int before = factory.recorder()->presses;
+            advance(pet + 35); require(factory.recorder()->presses == before, "pet deadline produces no keyboard input");
+        }
+        noSkillOutput();
+        now = 3002000; down = true; advance(now); down = false; finish(3002000);
+        require(factory.recorder()->texts.last() == shout.findChild<QLineEdit *>("shoutResyncMessage")->text(), "manual recast announces resync text");
+        advance(3116399); require(factory.recorder()->texts.size() == 26, "manual reset cancels old notification cadence");
+        advance(3116400); finish(3116400); advance(3122000);
+        require(factory.recorder()->texts.size() == 27, "manual reset anchors notifications to new 120-second pet cadence");
+        focus = {43, 101}; const int before = factory.recorder()->presses; shout.restartCycle();
+        require(factory.recorder()->presses == before, "reset cannot send to unrelated window"); focus = {42, 100};
+        now = 3130000; SendMessage(reinterpret_cast<HWND>(shout.winId()), WM_HOTKEY, 0x4a52, MAKELPARAM(MOD_CONTROL | MOD_ALT, VK_F9)); pump(40);
+        advance(3200000); require(factory.recorder()->presses == before, "restart hotkey only re-arms manual trigger and does not cast or announce early");
+        down = true; advance(3201000); down = false; finish(3201000);
+        require(factory.recorder()->texts.size() == 28, "re-armed manual flower re-syncs and announces once");
+        noSkillOutput(); shout.showPopup(); pump();
+        auto *popup = shout.findChild<QDialog *>("autoShoutPopup");
+        require(GetWindowLongPtr(reinterpret_cast<HWND>(popup->winId()), GWL_EXSTYLE) & WS_EX_NOACTIVATE, "pet popup preserves game focus");
+        popup->close(); require(!shout.isRunning(), "closing popup disarms pet notifications");
+        require(factory.recorder()->presses == factory.recorder()->releases, "all chat keys released");
+        shout.findChild<QCheckBox *>("shoutSkillEnabled")->setChecked(false);
+        shout.findChild<QCheckBox *>("shoutManualFirst")->setChecked(false); period->setValue(10);
+        now = 0; shout.start(); advance(3000); finish(3000); advance(13000); finish(13000);
+        require(shout.isRunning(), "standalone shout mode still repeats"); shout.stop();
+        std::puts("PASS: first physical cast only, no skill injection, 25 anchored pet cycles, manual resync, hotkey rearm and standalone shout"); return 0;
+    }
+    if (app.arguments().contains("--custom-buff")) {
+        GameController controller(nullptr, 0, &settings, 0, nullptr);
+        auto *set = controller.getActiveSetJoystick();
+        require(set->getJoyButton(0)->getPartialName(true, true) == "A", "physical A label");
+        require(set->getJoyButton(9)->getPartialName(true, true) == "LB", "physical LB label");
+        require(set->getJoyAxis(5)->getPAxisButton()->getPartialName(true, true) == "RT", "physical RT label");
+        PotionTimerDialog potion(&settings);
+        potion.findChild<QRadioButton *>("potionEnabled1")->setChecked(true);
+        potion.findChild<QKeySequenceEdit *>("potionKey1")->setKeySequence(QKeySequence("F5"));
+        auto *interval = potion.findChild<QSpinBox *>("potionInterval1");
+        require(!interval->isReadOnly(), "buff interval editable");
+        interval->setValue(595);
+        PotionTimerDialog restored(&settings);
+        require(restored.findChild<QSpinBox *>("potionInterval1")->value() == 595, "custom buff interval saved and restored");
+        qint64 now = 0;
+        potion.elapsed = [&]() { return now; };
+        potion.foreground = []() { return PotionTimerDialog::Target{42, 100}; };
+        auto advance = [&](qint64 time) { now = time; pump(35); };
+        potion.start(); advance(3000);
+        const int presses = factory.recorder()->presses;
+        require(presses > 0, "initial buff dose");
+        advance(3100); advance(597999);
+        require(factory.recorder()->presses == presses, "extended buff waits full custom interval");
+        advance(598000);
+        require(factory.recorder()->presses == presses + 1, "extended buff repeats at custom interval");
+        interval->setValue(600);
+        require(!potion.isRunning() && factory.recorder()->presses == factory.recorder()->releases,
+                "editing buff interval stops timer and releases held key");
+        const QString artifacts = qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) { potion.show(); pump(); potion.grab().save(QDir(artifacts).filePath("custom-buff.png")); }
+        std::puts("PASS: custom buff persistence, scheduling, stop on edit and physical controller labels");
+        return 0;
+    }
     if (app.arguments().contains("--native-buff")) {
         PotionTimerDialog potion(&settings);
         potion.findChild<QKeySequenceEdit *>("potionKey0")->setKeySequence(QKeySequence("F6"));
@@ -149,6 +234,10 @@ int main(int argc, char **argv)
     controller.setOfflineUniqueID("regression-offline");
     require(controller.getController() == nullptr, "no physical controller required");
     JoyButton *first = controller.getActiveSetJoystick()->getJoyButton(0);
+    require(first->getPartialName(true, true) == "A", "controller face button uses physical name");
+    require(controller.getActiveSetJoystick()->getJoyButton(9)->getPartialName(true, true) == "LB", "shoulder uses LB name");
+    require(controller.getActiveSetJoystick()->getJoyAxis(5)->getPAxisButton()->getPartialName(true, true) == "RT", "trigger uses RT name");
+
     {
         EmptyInterfaceController empty(&settings);
         GameController usable(nullptr, 2, &settings, 0, nullptr);
@@ -551,12 +640,28 @@ int main(int argc, char **argv)
                     count->setValue(3);
                     auto *ordinary = dialog->findChild<QSpinBox *>("alternateRepeatCount2");
                     require(ordinary && !ordinary->isEnabled(), "ordinary keyboard action retains duration mode");
+                    auto *minimum = dialog->findChild<QDoubleSpinBox *>("alternateMinimum2");
+                    require(minimum && minimum->decimals() == 2 && minimum->singleStep() == 0.01, "alternate timing supports hundredths");
+                    minimum->setValue(0.01);
+                    auto *add = dialog->findChild<QPushButton *>("alternateAddGroup");
+                    require(add != nullptr, "alternate groups can be added");
+                    for (int i = 0; i < 4; ++i) add->click();
+                    require(dialog->findChild<QSpinBox *>("alternateRepeatCount6") != nullptr, "more than four groups supported");
+                    dialog->grab().save(QDir(qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR")).filePath("alternate-groups.png"));
                     dialog->accept();
                 });
                 require(QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog"), "open alternate setup");
-                require(settings.value(QString("AlternatingSuites/%1/Set%2/RepeatCount1")
+                require(settings.value(QString("AlternatingSuites/%1/Set%2/Groups/1/Repeats")
                     .arg(controller.getUniqueIDString()).arg(controller.getActiveSetNumber()+1)).toInt()==3,
                     "alternate recording repeat count is persisted");
+                QTimer::singleShot(0, [&]() {
+                    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    require(dialog->findChild<QSpinBox *>("alternateRepeatCount6") != nullptr, "dynamic group count reloads");
+                    require(dialog->findChild<QDoubleSpinBox *>("alternateMinimum2")->value() == 0.01, "hundredth timing reloads without rounding");
+                    require(dialog->findChild<QSpinBox *>("alternateRepeatCount1")->value() == 3, "recording repeat count reloads");
+                    dialog->reject();
+                });
+                QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog");
             }
             other->clearSlotsEventReset();
             button->clearSlotsEventReset();
@@ -714,6 +819,19 @@ int main(int argc, char **argv)
                 "closing potion window stops and releases keys");
         now = 0; foreground = {}; potion.start(); advance(3000);
         require(!potion.isRunning(), "invalid target cancels potion start");
+        auto *interval = potion.findChild<QSpinBox *>("potionInterval1");
+        require(!interval->isReadOnly(), "buff interval is editable");
+        interval->setValue(595);
+        require(settings.value("PotionTimer/1/Seconds").toInt() == 595, "custom buff interval persists");
+        PotionTimerDialog restored(&settings);
+        require(restored.findChild<QSpinBox *>("potionInterval1")->value() == 595, "custom buff interval reloads");
+        foreground = {42, 100}; now = 0; potion.start(); advance(3000);
+        const int customPresses = factory.recorder()->presses;
+        advance(597999); require(factory.recorder()->presses == customPresses, "extended buff does not repeat early");
+        advance(598000); require(factory.recorder()->presses == customPresses + 1, "extended buff repeats at custom interval");
+        interval->setValue(600);
+        require(!potion.isRunning() && factory.recorder()->presses == factory.recorder()->releases,
+                "editing running interval stops and releases key");
         const QString artifacts = qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR");
         if (!artifacts.isEmpty()) { potion.show(); pump(); potion.grab().save(QDir(artifacts).filePath("potion-timer.png")); }
     }

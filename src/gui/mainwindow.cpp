@@ -265,6 +265,14 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
         }
         dialog->showNormal(); dialog->raise(); dialog->activateWindow();
     });
+    auto *shoutAction = new QAction(QStringLiteral("自动喊话 / 牧师开花…"), this);
+    shoutAction->setObjectName("openAutoShoutAction");
+    ui->menuOptions->addAction(shoutAction);
+    connect(shoutAction, &QAction::triggered, this, [this]() {
+        auto *dialog = findChild<AutoShoutDialog *>();
+        if (!dialog) { dialog = new AutoShoutDialog(m_settings, this); dialog->setAttribute(Qt::WA_DeleteOnClose); }
+        dialog->showNormal(); dialog->raise(); dialog->activateWindow();
+    });
     QAction *libraryAction = new QAction(tr("Custom Action Library…"), this);
     libraryAction->setObjectName("openActionLibraryAction");
     ui->menuOptions->addAction(libraryAction);
@@ -289,6 +297,7 @@ MainWindow::MainWindow(QMap<SDL_JoystickID, InputDevice *> *joysticks, CommandLi
 void MainWindow::emergencyStopAll()
 {
     for (auto *potion : findChildren<PotionTimerDialog *>()) potion->stop();
+    for (auto *shout : findChildren<AutoShoutDialog *>()) shout->stop();
 #ifdef Q_OS_WIN
     if (HANDLE recorderStop = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Local\\AntiMicroX.ActionRecorder.Stop"))
     { SetEvent(recorderStop); CloseHandle(recorderStop); }

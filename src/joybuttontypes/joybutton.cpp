@@ -1692,19 +1692,14 @@ QString JoyButton::getName(bool forceFullFormat, bool displayNames)
 
 QString JoyButton::getPartialName(bool forceFullFormat, bool displayNames) const
 {
+    Q_UNUSED(forceFullFormat);
     QString temp = QString();
 
     if (!buttonName.isEmpty() && displayNames)
     {
-        if (forceFullFormat)
-            temp.append(tr("Button")).append(" ");
-
         temp.append(buttonName);
     } else if (!defaultButtonName.isEmpty())
     {
-        if (forceFullFormat)
-            temp.append(tr("Button")).append(" ");
-
         temp.append(defaultButtonName);
     } else
     {

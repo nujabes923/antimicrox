@@ -7,11 +7,11 @@ import re
 import shutil
 import subprocess
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 root = Path(__file__).resolve().parents[1]
 installed = root / 'dist/AntiMicroX-RandomTurbo'
-name = 'AntiMicroX-易用版-' + datetime.now().strftime('%Y%m%d-%H%M%S')
+name = 'AntiMicroX-易用版-' + datetime.now(timezone(timedelta(hours=8))).strftime('%Y%m%d-%H%M%S')
 stage = root / 'dist' / name
 app = stage / 'App'
 app.mkdir(parents=True)
@@ -48,9 +48,26 @@ write(stage / '先看这里.txt', '''AntiMicroX 易用版（Windows 10 / 11，64
 
 【功能二：定时补药 / auto buff（无需手柄）】
 主界面底部点 auto buff，选择药水，设置游戏中对应的单个按键，
+补用间隔可自定义，按增益后的持续时间设置，建议提前 5 秒。
 点“开始（3 秒后）”，在倒计时内切回游戏。
 可以打开“小浮窗”查看状态或停止。关闭用药窗口 / 浮窗会停止。
 切到其他窗口时暂停发送；程序只按时间按键，不判断是否成功用药。
+
+【自动喊话 / 宠物续花通知】
+主界面 auto buff 右边点“自动喊话”。启用“宠物续花通知”，设置手动开花键，
+点击“开始监听首次开花”，切回游戏手动按一次开花键。
+第一次开花由你的实际按键触发，软件只监听，不重复发送。
+后续完全由宠物每 120 秒续花，软件只提前喊话，绝不自动按开花键。
+时间点固定为首次开花后第 120、240、360 秒……，不累计文字输入耗时。
+默认提前 5 秒通知：Enter 打开聊天 → 输入预设文字 → Enter 发送。
+请先选好游戏聊天频道并关闭聊天框，再启动监听。
+小浮窗支持开始 / 停止，不抢游戏焦点；切出游戏暂停发送。
+喊话中途切出会停止，请关闭游戏聊天框后重新启动监听。
+临时手动补花：再按一次开花键，软件会重新对时并发送“手动补花后喊话”的文字。
+Ctrl + Alt + F9 或浮窗“重新等待手动开花”仅重新进入等待，不替你释放技能；
+你实际按开花键后才重新计算 120 秒并喊话。
+关闭“宠物续花通知”后可仅按自定义间隔定时喊话。
+Ctrl + Alt + F10 紧急停止所有自动操作。
 
 【功能三：录制键盘和鼠标（无需手柄）】
 双击“单独打开录制工具”，或在主程序的 Action Library 中点“快速录制”。
@@ -67,8 +84,7 @@ F8 开始录制，3 秒内切到目标窗口；再按 F8 结束录制。
 【常见问题】
 • 找不到手柄：确认 Windows 已识别手柄，重新连接后再打开程序。
 • 游戏内没反应：先在记事本测试映射，并检查游戏按键设置。
-  若游戏以管理员身份运行，可右键 App 文件夹内 antimicrox.exe，
-  选择“以管理员身份运行”，再测试。
+  主程序默认请求管理员权限，启动时请允许 Windows 授权提示。
 • 提示缺少 DLL：重新完整解压，不要只复制 exe，也不要随意删 App 的文件。
 • 中文界面：随包附简体中文翻译；中文系统通常自动使用。
   新增功能的部分按钮仍是英文，可对照上面的中英文名称。
@@ -108,6 +124,8 @@ with zipfile.ZipFile(info / '项目源码.zip', 'w', zipfile.ZIP_DEFLATED) as ar
         p = Path(rel)
         if rel and (p.parts[0] in allowed_dirs or len(p.parts) == 1) and p.name != 'AGENTS.md' and (root / p).is_file():
             archive.write(root / p, 'AntiMicroX-source/' + p.as_posix())
+    if 'src/antimicrox.manifest' not in tracked:
+        archive.write(root / 'src/antimicrox.manifest', 'AntiMicroX-source/src/antimicrox.manifest')
     if 'tools/package-share.py' not in tracked:
         archive.write(__file__, 'AntiMicroX-source/tools/package-share.py')
 
@@ -129,7 +147,9 @@ env['PATH'] = str(Path(os.environ['WINDIR']) / 'System32') + ';' + os.environ['W
 for key in list(env):
     if key.startswith('QT_'):
         del env[key]
-for exe, arg in [('antimicrox.exe', '--version'), ('ActionRecorder.exe', '--self-test')]:
+assert b'requireAdministrator' in (app / 'antimicrox.exe').read_bytes()
+print('antimicrox.exe administrator manifest verified; native dependencies checked')
+for exe, arg in [('ActionRecorder.exe', '--self-test')]:
     result = subprocess.run([str(app / exe), arg], cwd=app, env=env, capture_output=True, timeout=30)
     if result.returncode:
         raise RuntimeError(f'{exe} verification failed: {result.returncode}: {result.stderr!r}')
