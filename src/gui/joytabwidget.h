@@ -20,6 +20,8 @@
 #define JOYTABWIDGET_H
 
 #include <QLabel>
+#include <QElapsedTimer>
+#include <QKeySequence>
 #include <QList>
 #include <QPair>
 #include <QStringList>
@@ -61,6 +63,8 @@ class JoyTabWidget : public QWidget
     explicit JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, QWidget *parent = nullptr);
     ~JoyTabWidget() override;
 
+    bool saveAlternateCloudBundle(const QString &path, const QString &name, QString *error);
+    bool restoreAlternateCloudBundle(const QString &path, QString *error);
     void saveSettings();                          // JoyTabSettings class
     void loadSettings(bool forceRefresh = false); // JoyTabSettings class
     void setCurrentConfig(int index);             // JoyTabSettings class
@@ -83,6 +87,13 @@ class JoyTabWidget : public QWidget
     InputDevice *getJoystick();
 
   protected:
+#ifdef Q_OS_WIN
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool nativeEvent(const QByteArray &, void *, qintptr *) override;
+#else
+    bool nativeEvent(const QByteArray &, void *, long *) override;
+#endif
+#endif
     void changeEvent(QEvent *event) override;
     void removeCurrentButtons();
     void retranslateUi();
@@ -127,6 +138,7 @@ class JoyTabWidget : public QWidget
     void showQuickSetDialog();
     void showKeyDelayDialog();
     void showAlternatingSuitesDialog();
+    void showAlternateCloudDialog();
     void showAlternatingSuitesPopup();
     void toggleAlternatingSuites();
     void alternatingSuitesTimeout();
@@ -242,6 +254,18 @@ class JoyTabWidget : public QWidget
     QStringList alternatingButtonIds;
     QVector<int> alternatingMinimums, alternatingMaximums;
     QVector<int> alternatingRepeats;
+    QVector<int> alternatingPressCounts, alternatingPressKeys, alternatingHoldMinimums, alternatingHoldMaximums;
+    QVector<int> alternatingGapMinimums, alternatingGapMaximums;
+    int alternatingPressCompleted = 0, alternatingHeldKey = 0;
+    void sendAlternatingKey(int alias, bool down);
+    QElapsedTimer alternatingElapsed;
+    qint64 alternatingLastElapsed = 0;
+    QLabel *alternatingElapsedLabel = nullptr;
+    QLabel *alternatingPopupElapsedLabel = nullptr;
+    QKeySequence alternatingHotkey;
+    bool alternatingHotkeyRegistered = false;
+    bool registerAlternatingHotkey(const QKeySequence &sequence);
+    QString alternatingHotkeySettingsKey() const;
     QProcess *alternatingRecordingProcess = nullptr;
     bool startAlternatingAssignment(int index);
     QString recordedAssignmentPayload(JoyButton *button) const;

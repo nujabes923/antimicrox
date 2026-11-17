@@ -130,6 +130,7 @@ endif(UNIX)
 set(antimicrox_MAIN src/main.cpp)
 
 set(antimicrox_SOURCES
+        src/alternatecloud.cpp
         src/actionlibrary.cpp
         src/gui/actionlibrarydialog.cpp
         src/gui/potiontimerdialog.cpp

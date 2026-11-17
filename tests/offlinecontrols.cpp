@@ -17,11 +17,16 @@
 #include "mainwindow.h"
 #include "commandlineutility.h"
 #include "actionlibrary.h"
+#include "alternatecloud.h"
+#include <QStandardPaths>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "actionlibrarydialog.h"
 #include "potiontimerdialog.h"
 #include <QKeySequenceEdit>
 #include <QKeyEvent>
 #include <QRadioButton>
+#include <QDialogButtonBox>
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QTableWidget>
@@ -562,6 +567,137 @@ int main(int argc, char **argv)
     pump();
     require(!first->getButtonState() && !second->getButtonState(), "closing offline tab releases keys");
     require(factory.recorder()->presses == factory.recorder()->releases, "no keys left held after closing tab");
+    {
+        JoyTabWidget tab(&controller, &settings);
+        QTimer::singleShot(0, [&]() {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            dialog->findChild<QSpinBox *>("alternatePressCount1")->setValue(30);
+            dialog->findChild<QKeySequenceEdit *>("alternatePressKey1")->setKeySequence(QKeySequence("X"));
+            dialog->findChild<QDoubleSpinBox *>("alternateHoldMinimum1")->setValue(0.5);
+            dialog->findChild<QDoubleSpinBox *>("alternateHoldMaximum1")->setValue(0.7);
+            dialog->findChild<QDoubleSpinBox *>("alternateGapMinimum1")->setValue(0.1);
+            dialog->findChild<QDoubleSpinBox *>("alternateGapMaximum1")->setValue(0.2);
+            dialog->findChild<QDoubleSpinBox *>("alternateWaitAfter1")->setValue(1.0);
+            auto *name = dialog->findChild<QComboBox *>("alternatePresetName");
+            name->setCurrentText("30 roar presses");
+            dialog->findChild<QPushButton *>("alternateSavePreset")->click();
+            dialog->findChild<QSpinBox *>("alternatePressCount1")->setValue(1);
+            dialog->findChild<QPushButton *>("alternateLoadPreset")->click();
+            require(dialog->findChild<QSpinBox *>("alternatePressCount1")->value() == 30, "scheme restores counted key mode");
+            if (app.arguments().contains("--native-alternate"))
+                dialog->findChild<QKeySequenceEdit *>("alternateToggleHotkey")->setKeySequence(QKeySequence("Ctrl+Alt+F8"));
+            pump();
+            dialog->grab().save(QDir(qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR")).filePath("alternate-counted-presses.png"));
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        });
+        QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog");
+        require(settings.value(group + "Groups/1/PressCount").toInt() == 30, "counted press settings persist");
+        auto *start = tab.findChild<QPushButton *>("alternatingSuitesStartButton");
+        auto *phaseTimer = tab.findChild<QTimer *>("alternatePhaseTimer");
+        auto *elapsed = tab.findChild<QLabel *>("alternateElapsed");
+        const int before = factory.recorder()->keyEvents.size();
+        start->click();
+        require(start->isChecked(), "counted rotation starts");
+        QSet<int> durations;
+        for (int i = 0; i < 30; ++i) {
+            require(phaseTimer->interval() >= 500 && phaseTimer->interval() <= 700, "each hold is within 0.5-0.7 seconds");
+            durations.insert(phaseTimer->interval());
+            require(factory.recorder()->keyEvents.last().code == 0x58 && factory.recorder()->keyEvents.last().down,
+                    "counted phase presses X");
+            QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout");
+            require(!factory.recorder()->keyEvents.last().down, "every press has a release");
+            if (i < 29) {
+                require(phaseTimer->interval() >= 100 && phaseTimer->interval() <= 200, "release gap is randomized within bounds");
+                QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout");
+            }
+        }
+        require(factory.recorder()->keyEvents.size() - before == 60, "30 presses produce exactly 30 key-down/key-up pairs");
+        require(durations.size() > 1, "hold duration is resampled for each press");
+        require(phaseTimer->interval() == 1000, "counted group honors wait after final release");
+        QMetaObject::invokeMethod(&tab, "alternatingSuitesTimeout");
+        require(second->getButtonState(), "counted group advances to next assignment");
+        start->click();
+        start->click();
+        pump(1100);
+        require(elapsed->text() != "Run: 00:00:00", "session elapsed time advances");
+        tab.emergencyStop();
+        const QString stoppedTime = elapsed->text();
+        pump(1100);
+        require(elapsed->text() == stoppedTime, "stopped elapsed time stays frozen");
+        start->click();
+        require(elapsed->text() == "Run: 00:00:00", "new run resets elapsed time");
+        tab.emergencyStop();
+        require(factory.recorder()->presses == factory.recorder()->releases, "emergency stop releases counted key mid-hold");
+#ifdef Q_OS_WIN
+        if (app.arguments().contains("--native-alternate")) {
+            const HWND handle = reinterpret_cast<HWND>(tab.winId());
+            require(!RegisterHotKey(nullptr, 0x6a53, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F8), "configured global shortcut is registered");
+            PostMessage(handle, WM_HOTKEY, 0x4a53, 0); pump(30);
+            require(start->isChecked(), "global hotkey starts rotation");
+            PostMessage(handle, WM_HOTKEY, 0x4a53, 0); pump(30);
+            require(!start->isChecked(), "same global hotkey stops rotation");
+            require(factory.recorder()->presses == factory.recorder()->releases, "hotkey stop releases counted key");
+        }
+#endif
+        settings.remove(group + "Groups");
+    }
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        const QString cloudFolder = temporary.filePath("icloud-A");
+        QDir().mkpath(cloudFolder);
+        settings.setValue("AlternateCloud/Folder", cloudFolder);
+        const QString cloudPath = cloudFolder + "/snapshot.alternate.json";
+        QString problem;
+        JoyTabWidget machineA(&controller, &settings);
+        require(machineA.saveAlternateCloudBundle(cloudPath, QString::fromUtf8("龙咆哮 - A机器"), &problem), "export complete cloud snapshot");
+        AlternateCloudBundle bundle;
+        require(AlternateCloud::read(cloudPath, bundle, &problem), "cloud snapshot validates and reads");
+        require(bundle.sets.size() == 8 && bundle.sets.value("1").toMap().value("Presets").toMap().contains("30 roar presses"),
+                "snapshot includes eight sets and counted-press scheme");
+        const QString otherPath = temporary.filePath("synced-on-B.alternate.json");
+        require(QFile::copy(cloudPath, otherPath), "simulate iCloud delivering snapshot to machine B");
+        AntiMicroSettings settingsB(temporary.filePath("machine-B.ini"), QSettings::IniFormat);
+        GameController controllerB(nullptr, 0, &settingsB, 0, nullptr);
+        controllerB.setOfflineUniqueID("different-machine-B-controller");
+        JoyTabWidget machineB(&controllerB, &settingsB);
+        const bool restored = machineB.restoreAlternateCloudBundle(otherPath, &problem);
+        if (!restored) std::fprintf(stderr, "Restore error: %s\n", qPrintable(problem));
+        require(restored, "restore snapshot onto different controller ID");
+        const QString rootB = "AlternatingSuites/different-machine-B-controller/Set1/";
+        require(settingsB.value(rootB + "Presets").toMap().contains("30 roar presses"), "schemes remapped to machine B identity");
+        const QVariantList restoredRows = settingsB.value(rootB + "Presets").toMap().value("30 roar presses").toMap().value("Groups").toList();
+        require(restoredRows.first().toMap().value("PressCount").toInt() == 30 &&
+                restoredRows.first().toMap().value("HoldMinimum").toInt() == 500 &&
+                restoredRows.first().toMap().value("HoldMaximum").toInt() == 700,
+                "count and random hold bounds survive cross-machine transfer");
+        require(controllerB.getActiveSetJoystick()->getJoyButton(0)->getAssignedSlots()->size() > 0,
+                "controller assignments restored along with schemes");
+        require(!machineB.findChild<QPushButton *>("alternatingSuitesStartButton")->isChecked(), "cloud restore never auto-starts rotation");
+        const QString backupDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/alternate-cloud/backups";
+        require(!QDir(backupDir).entryList({"*.alternate.json"}).isEmpty(), "cloud restore creates a recoverable local backup");
+        QByteArray rebound;
+        require(AlternateCloud::portableProfile("<gamecontroller><slot><path>C:/other-computer/ActionRecorder.exe</path></slot></gamecontroller>",
+                "gamecontroller", rebound, &problem, true) && rebound.contains(QCoreApplication::applicationDirPath().toUtf8()),
+                "recording executable path remaps to destination installation");
+        const QByteArray profileBefore = ActionLibrary::snapshot(controllerB.getActiveSetJoystick()->getJoyButton(0));
+        QFile invalid(temporary.filePath("invalid.alternate.json")); require(invalid.open(QIODevice::WriteOnly), "create broken cloud fixture");
+        invalid.write("{broken"); invalid.close();
+        require(!machineB.restoreAlternateCloudBundle(invalid.fileName(), &problem), "reject incomplete sync file");
+        require(ActionLibrary::snapshot(controllerB.getActiveSetJoystick()->getJoyButton(0)) == profileBefore,
+                "invalid cloud file leaves existing assignments unchanged");
+        QTimer::singleShot(0, [&]() {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            require(dialog && dialog->objectName() == "alternateCloudDialog", "cloud dialog opens");
+            require(dialog->findChild<QListWidget *>("alternateCloudList")->count() == 1, "cloud dialog lists synced snapshots");
+            dialog->findChild<QLineEdit *>("alternateCloudName")->setText("Second snapshot");
+            dialog->findChild<QPushButton *>("alternateCloudSave")->click();
+            require(dialog->findChild<QListWidget *>("alternateCloudList")->count() == 2, "new upload preserves existing snapshot");
+            pump(); dialog->grab().save(QDir(qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR")).filePath("alternate-icloud.png"));
+            dialog->reject();
+        });
+        require(QMetaObject::invokeMethod(&machineA, "showAlternateCloudDialog"), "open cloud UI from controller tab");
+        QStandardPaths::setTestModeEnabled(false);
+    }
     if (QCoreApplication::arguments().contains("--alternate-only")) {
         std::puts("PASS: alternate schemes, persistence, cancellation and offline playback");
         return 0;

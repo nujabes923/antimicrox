@@ -18,6 +18,19 @@
 
 #include "qtconnectionhelper.h"
 #include "actionlibrarydialog.h"
+#include "alternatecloud.h"
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QSaveFile>
+#include <QSignalBlocker>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QDateTime>
+#include "antkeymapper.h"
+#include "event.h"
+#include "joybuttonslot.h"
+#include <QKeySequenceEdit>
+#include <QApplication>
 
 #include "joytabwidget.h"
 
@@ -108,6 +121,8 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
 
     alternatingSuitesTimer = new QTimer(this);
     alternatingSuitesTimer->setSingleShot(true);
+    alternatingSuitesTimer->setTimerType(Qt::PreciseTimer);
+    alternatingSuitesTimer->setObjectName("alternatePhaseTimer");
     connect(alternatingSuitesTimer, &QTimer::timeout, this, &JoyTabWidget::alternatingSuitesTimeout);
     alternatingDisplayTimer = new QTimer(this);
     alternatingDisplayTimer->setInterval(100);
@@ -180,6 +195,11 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     saveAsButton->setIcon(PadderCommon::loadIcon("document-save-as", ":/images/actions/document_save_as.png"));
 
     configHorizontalLayout->addWidget(saveAsButton);
+    auto *cloudSchemes = new QPushButton(tr("iCloud Schemes"), this);
+    cloudSchemes->setObjectName("alternateCloudButton");
+    cloudSchemes->setToolTip(tr("Save or restore Alternate schemes and their controller profile through iCloud Drive."));
+    configHorizontalLayout->addWidget(cloudSchemes);
+    connect(cloudSchemes, &QPushButton::clicked, this, &JoyTabWidget::showAlternateCloudDialog);
 
     verticalLayout->addLayout(configHorizontalLayout);
     verticalLayout->setStretchFactor(configHorizontalLayout, 1);
@@ -493,7 +513,7 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     alternatingSuitesButton = new QPushButton(tr("Alternate Setup"), this);
     alternatingSuitesButton->setObjectName(QString::fromUtf8("alternatingSuitesButton"));
     alternatingSuitesButton->setToolTip(
-        tr("Configure up to three existing button assignment sets to run one at a time."));
+        tr("Configure assignment groups or counted key presses to run one at a time."));
     horizontalLayout_3->addWidget(alternatingSuitesButton);
 
     alternatingSuitesStartButton = new QPushButton(tr("Start Alternating"), this);
@@ -501,6 +521,9 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
     alternatingSuitesStartButton->setCheckable(true);
     alternatingSuitesStartButton->setToolTip(tr("Start or stop the configured assignment-set rotation."));
     horizontalLayout_3->addWidget(alternatingSuitesStartButton);
+    alternatingElapsedLabel = new QLabel(tr("Run: 00:00:00"), this);
+    alternatingElapsedLabel->setObjectName("alternateElapsed");
+    horizontalLayout_3->addWidget(alternatingElapsedLabel);
 
     alternatingSuitesPopupButton = new QPushButton(tr("Pop Up Controls"), this);
     alternatingSuitesPopupButton->setObjectName(QString::fromUtf8("alternatingSuitesPopupButton"));
@@ -595,10 +618,14 @@ JoyTabWidget::JoyTabWidget(InputDevice *joystick, AntiMicroSettings *settings, Q
 
     reconnectCheckUnsavedEvent();
     reconnectMainComboBoxEvents();
+    if (!registerAlternatingHotkey(QKeySequence(m_settings->value(alternatingHotkeySettingsKey()).toString())))
+        alternatingSuitesStartButton->setToolTip(tr("Saved global hotkey is unavailable. Choose another in Alternate Setup."));
 }
 
 JoyTabWidget::~JoyTabWidget()
 {
+    registerAlternatingHotkey(QKeySequence());
+    if (alternatingHeldKey) sendAlternatingKey(alternatingHeldKey, false);
     QProcess *recordingProcess = alternatingRecordingProcess;
     if (m_joystick != nullptr)
         setAlternatingSuiteRunning(false);
@@ -1624,6 +1651,74 @@ QString JoyTabWidget::alternatingSettingsGroup() const
     return QString("AlternatingSuites/%1/Set%2").arg(deviceId).arg(m_joystick->getActiveSetNumber() + 1);
 }
 
+QString JoyTabWidget::alternatingHotkeySettingsKey() const
+{
+    QString deviceId = m_joystick->getUniqueIDString();
+    deviceId.replace('/', '_'); deviceId.replace('\\', '_');
+    return "AlternatingSuites/" + deviceId + "/ToggleHotkey";
+}
+
+bool JoyTabWidget::registerAlternatingHotkey(const QKeySequence &sequence)
+{
+    if (sequence == alternatingHotkey && (sequence.isEmpty() || alternatingHotkeyRegistered)) return true;
+#ifdef Q_OS_WIN
+    auto install = [this](const QKeySequence &value) {
+        if (value.isEmpty()) return true;
+        if (value.count() != 1) return false;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const int combined = value[0].toCombined();
+#else
+        const int combined = value[0];
+#endif
+        const int key = combined & ~Qt::KeyboardModifierMask;
+        const int code = AntKeyMapper::getInstance()->returnVirtualKey(key);
+        if (!code) return false;
+        UINT modifiers = MOD_NOREPEAT;
+        if (combined & Qt::CTRL) modifiers |= MOD_CONTROL;
+        if (combined & Qt::ALT) modifiers |= MOD_ALT;
+        if (combined & Qt::SHIFT) modifiers |= MOD_SHIFT;
+        if (combined & Qt::META) modifiers |= MOD_WIN;
+        return RegisterHotKey(reinterpret_cast<HWND>(winId()), 0x4a53, modifiers, code) != 0;
+    };
+    if (alternatingHotkeyRegistered) UnregisterHotKey(reinterpret_cast<HWND>(winId()), 0x4a53);
+    if (!install(sequence)) {
+        alternatingHotkeyRegistered = !alternatingHotkey.isEmpty() && install(alternatingHotkey);
+        return false;
+    }
+    alternatingHotkey = sequence;
+    alternatingHotkeyRegistered = !sequence.isEmpty();
+    alternatingSuitesStartButton->setToolTip(sequence.isEmpty() ? tr("Start or stop the configured rotation.") :
+        tr("Global start/stop: %1").arg(sequence.toString(QKeySequence::NativeText)));
+    return true;
+#else
+    return sequence.isEmpty();
+#endif
+}
+
+#ifdef Q_OS_WIN
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+bool JoyTabWidget::nativeEvent(const QByteArray &type, void *message, qintptr *result)
+#else
+bool JoyTabWidget::nativeEvent(const QByteArray &type, void *message, long *result)
+#endif
+{
+    const auto *msg = static_cast<MSG *>(message);
+    if (msg->message == WM_HOTKEY && msg->wParam == 0x4a53) {
+        // A running rotation can always be stopped, including while editing.
+        if (alternatingSuitesActive || !QApplication::activeModalWidget()) toggleAlternatingSuites();
+        *result = 0; return true;
+    }
+    return QWidget::nativeEvent(type, message, result);
+}
+#endif
+
+void JoyTabWidget::sendAlternatingKey(int alias, bool down)
+{
+    JoyButtonSlot slot(AntKeyMapper::getInstance()->returnVirtualKey(alias), alias, JoyButtonSlot::JoyKeyboard);
+    sendevent(&slot, down);
+    alternatingHeldKey = down ? alias : 0;
+}
+
 void JoyTabWidget::loadAlternatingSuiteSettings()
 {
     const auto buttons = alternatingSuiteButtons();
@@ -1634,6 +1729,9 @@ void JoyTabWidget::loadAlternatingSuiteSettings()
     m_settings->beginGroup(alternatingSettingsGroup());
     alternatingButtonIds.clear(); alternatingMinimums.clear(); alternatingMaximums.clear();
     alternatingRepeats.clear(); alternatingWaits.clear();
+    alternatingPressCounts.clear(); alternatingPressKeys.clear();
+    alternatingHoldMinimums.clear(); alternatingHoldMaximums.clear();
+    alternatingGapMinimums.clear(); alternatingGapMaximums.clear();
     const bool modern = m_settings->contains("Groups/size");
     const int count = modern ? m_settings->beginReadArray("Groups") : 4;
     const QStringList legacy{"First", "Second", "Third", "Fourth"};
@@ -1646,6 +1744,12 @@ void JoyTabWidget::loadAlternatingSuiteSettings()
         alternatingMinimums.append(qBound(10, m_settings->value(prefix + "Minimum", i == 0 ? 20000 : 15000).toInt(), 600000));
         alternatingMaximums.append(qBound(10, m_settings->value(prefix + "Maximum", i == 0 ? 20000 : 15000).toInt(), 600000));
         alternatingRepeats.append(qBound(0, m_settings->value(modern ? "Repeats" : QString("RepeatCount%1").arg(i + 1), 0).toInt(), 1000));
+        alternatingPressCounts.append(qBound(0, m_settings->value("PressCount", 0).toInt(), 10000));
+        alternatingPressKeys.append(m_settings->value("PressKey", Qt::Key_X).toInt());
+        alternatingHoldMinimums.append(qBound(10, m_settings->value("HoldMinimum", 500).toInt(), 600000));
+        alternatingHoldMaximums.append(qBound(10, m_settings->value("HoldMaximum", 700).toInt(), 600000));
+        alternatingGapMinimums.append(qBound(10, m_settings->value("GapMinimum", 100).toInt(), 600000));
+        alternatingGapMaximums.append(qBound(10, m_settings->value("GapMaximum", 200).toInt(), 600000));
         alternatingWaits.append(qBound(0, m_settings->value(modern ? "Wait" : QString("WaitAfter%1").arg(i + 1), 0).toInt(), 600000));
     }
     if (modern) m_settings->endArray();
@@ -1686,6 +1790,16 @@ QString JoyTabWidget::recordedAssignmentPayload(JoyButton *button) const
 bool JoyTabWidget::startAlternatingAssignment(int index)
 {
     JoyButton *button = resolveAlternatingSuiteButton(configuredAlternatingSuiteIds().value(index));
+    alternatingPressCompleted = 0;
+    if (alternatingPressCounts.value(index) > 0) {
+        const int alias = alternatingPressKeys.value(index);
+        if ((alias & Qt::KeyboardModifierMask) || !AntKeyMapper::getInstance()->returnVirtualKey(alias)) return false;
+        sendAlternatingKey(alias, true);
+        const int low = qMin(alternatingHoldMinimums[index], alternatingHoldMaximums[index]);
+        const int high = qMax(alternatingHoldMinimums[index], alternatingHoldMaximums[index]);
+        alternatingSuitesTimer->start(QRandomGenerator::global()->bounded(low, high + 1));
+        return true;
+    }
     if (!button) return false;
     if (alternatingRepeats[index] == 0) {
         QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, true));
@@ -1723,7 +1837,7 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     for (const QString &id : ids)
     {
         JoyButton *button = resolveAlternatingSuiteButton(id);
-        if (button == nullptr)
+        if (button == nullptr && alternatingPressCounts.value(suites.size()) == 0)
         {
             running = false;
             break;
@@ -1736,6 +1850,8 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     alternatingWaiting = false;
     if (!running)
     {
+        if (alternatingSuitesActive && alternatingElapsed.isValid()) alternatingLastElapsed = alternatingElapsed.elapsed();
+        if (alternatingHeldKey) sendAlternatingKey(alternatingHeldKey, false);
         if (alternatingRecordingProcess) {
             QFile cancellation(alternatingRecordingProcess->property("cancellationFile").toString());
             if (cancellation.open(QIODevice::WriteOnly)) cancellation.close();
@@ -1747,7 +1863,7 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
         alternatingSuitesTimer->stop();
         alternatingDisplayTimer->stop();
         for (JoyButton *button : suites)
-            QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
+            if (button) QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
         alternatingSuitesActive = false;
         alternatingActiveSuiteIndex = -1;
         alternatingSuitesStartButton->setChecked(false);
@@ -1757,8 +1873,10 @@ void JoyTabWidget::setAlternatingSuiteRunning(bool running)
     }
 
     for (JoyButton *button : suites)
-        QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
+        if (button) QMetaObject::invokeMethod(button, "setExternalToggleState", synchronousConnectionType(button), Q_ARG(bool, false));
 
+    alternatingElapsed.start();
+    alternatingLastElapsed = 0;
     alternatingSuitesActive = true;
     alternatingActiveSuiteIndex = 0;
     alternatingSuitesStartButton->setChecked(true);
@@ -1778,7 +1896,7 @@ void JoyTabWidget::switchAlternatingSuite()
     for (const QString &id : ids)
     {
         JoyButton *button = resolveAlternatingSuiteButton(id);
-        if (button == nullptr)
+        if (button == nullptr && alternatingPressCounts.value(suites.size()) == 0)
         {
             setAlternatingSuiteRunning(false);
             return;
@@ -1794,7 +1912,7 @@ void JoyTabWidget::switchAlternatingSuite()
     JoyButton *outgoing = suites.at(alternatingActiveSuiteIndex);
     if (!alternatingWaiting)
     {
-        QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
+        if (outgoing) QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
         const int wait = alternatingWaits[alternatingActiveSuiteIndex];
         if (wait > 0)
         {
@@ -1805,12 +1923,34 @@ void JoyTabWidget::switchAlternatingSuite()
     alternatingWaiting = false;
     alternatingActiveSuiteIndex = (alternatingActiveSuiteIndex + 1) % suites.size();
 
-    QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
+    if (outgoing) QMetaObject::invokeMethod(outgoing, "setExternalToggleState", synchronousConnectionType(outgoing), Q_ARG(bool, false));
     if (!startAlternatingAssignment(alternatingActiveSuiteIndex)) { setAlternatingSuiteRunning(false); return; }
     updateAlternatingSuitesPopup();
 }
 
-void JoyTabWidget::alternatingSuitesTimeout() { switchAlternatingSuite(); }
+void JoyTabWidget::alternatingSuitesTimeout()
+{
+    if (!alternatingSuitesActive) return;
+    const int index = alternatingActiveSuiteIndex;
+    if (!alternatingWaiting && alternatingPressCounts.value(index) > 0) {
+        if (alternatingHeldKey) {
+            sendAlternatingKey(alternatingHeldKey, false);
+            ++alternatingPressCompleted;
+            if (alternatingPressCompleted >= alternatingPressCounts[index]) { switchAlternatingSuite(); return; }
+            const int low = qMin(alternatingGapMinimums[index], alternatingGapMaximums[index]);
+            const int high = qMax(alternatingGapMinimums[index], alternatingGapMaximums[index]);
+            alternatingSuitesTimer->start(QRandomGenerator::global()->bounded(low, high + 1));
+        } else {
+            sendAlternatingKey(alternatingPressKeys[index], true);
+            const int low = qMin(alternatingHoldMinimums[index], alternatingHoldMaximums[index]);
+            const int high = qMax(alternatingHoldMinimums[index], alternatingHoldMaximums[index]);
+            alternatingSuitesTimer->start(QRandomGenerator::global()->bounded(low, high + 1));
+        }
+        updateAlternatingSuitesPopup();
+        return;
+    }
+    switchAlternatingSuite();
+}
 
 void JoyTabWidget::emergencyStop()
 {
@@ -1870,6 +2010,10 @@ void JoyTabWidget::showAlternatingSuitesPopup()
         alternatingSuitesPopupStatus = new QLabel(alternatingSuitesPopup);
         alternatingSuitesPopupStatus->setAlignment(Qt::AlignCenter);
         layout->addWidget(alternatingSuitesPopupStatus);
+        alternatingPopupElapsedLabel = new QLabel(alternatingSuitesPopup);
+        alternatingPopupElapsedLabel->setObjectName("alternatePopupElapsed");
+        alternatingPopupElapsedLabel->setAlignment(Qt::AlignCenter);
+        layout->addWidget(alternatingPopupElapsedLabel);
 
         QHBoxLayout *buttonLayout = new QHBoxLayout();
         alternatingSuitesPopupStartButton = new QPushButton(tr("Start"), alternatingSuitesPopup);
@@ -1919,6 +2063,11 @@ void JoyTabWidget::showAlternatingSuitesPopup()
 
 void JoyTabWidget::updateAlternatingSuitesPopup()
 {
+    const qint64 seconds = (alternatingSuitesActive ? alternatingElapsed.elapsed() : alternatingLastElapsed) / 1000;
+    const QString elapsed = tr("Run: %1:%2:%3").arg(seconds / 3600, 2, 10, QLatin1Char('0'))
+        .arg(seconds / 60 % 60, 2, 10, QLatin1Char('0')).arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    if (alternatingElapsedLabel) alternatingElapsedLabel->setText(elapsed);
+    if (alternatingPopupElapsedLabel) alternatingPopupElapsedLabel->setText(elapsed);
     if (alternatingSuitesPopup == nullptr)
         return;
 
@@ -1935,6 +2084,13 @@ void JoyTabWidget::updateAlternatingSuitesPopup()
             return button != nullptr ? button->getPartialName() : ids.value(index);
         };
         const int next = (alternatingActiveSuiteIndex + 1) % ids.size();
+        if (!alternatingWaiting && alternatingPressCounts.value(alternatingActiveSuiteIndex) > 0) {
+            alternatingSuitesPopupStatus->setText(tr("Pressing %1: %2 / %3 completed\nNext %4: %5")
+                .arg(QKeySequence(alternatingPressKeys[alternatingActiveSuiteIndex]).toString())
+                .arg(alternatingPressCompleted).arg(alternatingPressCounts[alternatingActiveSuiteIndex])
+                .arg(next + 1).arg(label(next)));
+            return;
+        }
         if (!alternatingWaiting && alternatingRepeats[alternatingActiveSuiteIndex] > 0) {
             alternatingSuitesPopupStatus->setText(tr("Running %1: %2\nRecording repeats: %3\nNext %4: %5")
                 .arg(alternatingActiveSuiteIndex + 1).arg(label(alternatingActiveSuiteIndex))
@@ -1948,6 +2104,180 @@ void JoyTabWidget::updateAlternatingSuitesPopup()
                 .arg(next + 1).arg(label(next)));
     } else
         alternatingSuitesPopupStatus->setText(tr("Stopped"));
+}
+
+bool JoyTabWidget::saveAlternateCloudBundle(const QString &path, const QString &name, QString *error)
+{
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) { *error = tr("Could not create a temporary profile."); return false; }
+    const QString profilePath = temporary.filePath("profile.amgp");
+    bool written = false;
+    QMetaObject::invokeMethod(&tabHelper, "writeConfigFile", synchronousConnectionType(&tabHelper),
+                              Q_RETURN_ARG(bool, written), Q_ARG(QString, profilePath));
+    if (!written) { *error = tabHelper.getWriter()->getErrorString(); return false; }
+    QFile profile(profilePath);
+    if (!profile.open(QIODevice::ReadOnly)) { *error = profile.errorString(); return false; }
+    AlternateCloudBundle bundle;
+    bundle.name = name; bundle.profile = profile.readAll(); bundle.deviceType = m_joystick->getXmlName();
+    bundle.activeSet = m_joystick->getActiveSetNumber();
+    bundle.hotkey = m_settings->value(alternatingHotkeySettingsKey()).toString();
+    const QString root = alternatingHotkeySettingsKey().section('/', 0, -2);
+    m_settings->getLock()->lock();
+    for (int i = 1; i <= 8; ++i) {
+        QVariantMap values;
+        m_settings->beginGroup(root + QString("/Set%1").arg(i));
+        for (const QString &key : m_settings->allKeys()) values[key] = m_settings->value(key);
+        m_settings->endGroup();
+        bundle.sets[QString::number(i)] = values;
+    }
+    m_settings->getLock()->unlock();
+    return AlternateCloud::write(path, bundle, error);
+}
+
+bool JoyTabWidget::restoreAlternateCloudBundle(const QString &path, QString *error)
+{
+    AlternateCloudBundle bundle;
+    if (!AlternateCloud::read(path, bundle, error)) return false;
+    if (bundle.deviceType != m_joystick->getXmlName()) {
+        *error = tr("This bundle requires a %1 controller profile. Select a matching controller tab first.").arg(bundle.deviceType);
+        return false;
+    }
+    QByteArray importedProfile;
+    if (!AlternateCloud::portableProfile(bundle.profile, bundle.deviceType, importedProfile, error, true)) return false;
+    const QString local = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/alternate-cloud";
+    if (!QDir().mkpath(local + "/backups")) { *error = tr("Could not create local backup folder."); return false; }
+    const QString token = QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz") + "-" + QUuid::createUuid().toString(QUuid::Id128);
+    const QString backup = local + "/backups/" + token + ".alternate.json";
+    if (!saveAlternateCloudBundle(backup, tr("Before restoring %1").arg(bundle.name), error)) return false;
+    const QString profilePath = local + "/" + token + "." + bundle.deviceType + ".amgp";
+    QSaveFile file(profilePath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(importedProfile) != importedProfile.size() || !file.commit()) {
+        *error = file.errorString(); return false;
+    }
+    // The UI has explained the replacement; the complete previous state is backed up.
+    setAlternatingSuiteRunning(false);
+    m_joystick->revertProfileEdited();
+    // Normal profile selection is queued. Restore synchronously so settings are
+    // committed only after the new controller profile has finished loading.
+    {
+        const QSignalBlocker blocked(configBox);
+        configBox->insertItem(1, bundle.name, profilePath);
+        configBox->setCurrentIndex(1);
+    }
+    changeJoyConfig(1);
+    removeProfileEditNotification();
+    if (configBox->currentData().toString() != profilePath || !tabHelper.getReader() || tabHelper.getReader()->hasError()) {
+        *error = tr("Profile could not be restored. Previous configuration backup: %1\nSelected: %2\nReader: %3").arg(backup, configBox->currentData().toString(), tabHelper.getReader() ? tabHelper.getReader()->getErrorString() : "not loaded");
+        return false;
+    }
+    const QString root = alternatingHotkeySettingsKey().section('/', 0, -2);
+    m_settings->getLock()->lock();
+    for (int i = 1; i <= 8; ++i) {
+        m_settings->beginGroup(root + QString("/Set%1").arg(i));
+        m_settings->remove("");
+        const QVariantMap values = bundle.sets.value(QString::number(i)).toMap();
+        for (auto it = values.cbegin(); it != values.cend(); ++it) m_settings->setValue(it.key(), it.value());
+        m_settings->endGroup();
+    }
+    m_settings->setValue(alternatingHotkeySettingsKey(), bundle.hotkey);
+    m_settings->sync();
+    const bool saved = m_settings->status() == QSettings::NoError;
+    m_settings->getLock()->unlock();
+    QMetaObject::invokeMethod(m_joystick, [this, bundle]() { m_joystick->setActiveSetNumber(bundle.activeSet); }, synchronousConnectionType(m_joystick));
+    loadAlternatingSuiteSettings();
+    registerAlternatingHotkey(QKeySequence());
+    const bool hotkey = registerAlternatingHotkey(QKeySequence(bundle.hotkey));
+    saveDeviceSettings(true);
+    *error = tr("Restored %1. Rotation is stopped. Previous configuration backup: %2").arg(bundle.name, backup);
+    if (!hotkey) *error += tr("\nThe saved hotkey is occupied on this machine. Choose another in Alternate Setup.");
+    if (!saved) { *error += tr("\nLocal settings could not be saved to disk."); return false; }
+    return true;
+}
+
+void JoyTabWidget::showAlternateCloudDialog()
+{
+    QDialog dialog(this);
+    dialog.setObjectName("alternateCloudDialog");
+    dialog.setWindowTitle(tr("iCloud Alternate Schemes"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *help = new QLabel(tr("On both computers, select the same folder inside iCloud Drive. Save on A, wait for iCloud to sync, "
+        "then refresh and restore on B. Includes all eight sets, saved Alternate schemes, hotkey, and the current controller profile. "
+        "Save changes with OK in Alternate Setup before uploading. External programs are not included."), &dialog);
+    help->setWordWrap(true); layout->addWidget(help);
+    auto *folderRow = new QHBoxLayout();
+    auto *folder = new QLineEdit(&dialog); folder->setObjectName("alternateCloudFolder");
+    QString defaultFolder;
+    for (const QString &candidate : {QDir::homePath() + "/iCloudDrive", QDir::homePath() + "/iCloud Drive"})
+        if (QDir(candidate).exists()) { defaultFolder = candidate + "/AntiMicroX/AlternateSchemes"; break; }
+    folder->setText(m_settings->value("AlternateCloud/Folder", defaultFolder).toString());
+    auto *browse = new QPushButton(tr("Choose iCloud folder"), &dialog);
+    folderRow->addWidget(folder, 1); folderRow->addWidget(browse); layout->addLayout(folderRow);
+    auto *name = new QLineEdit(&dialog); name->setObjectName("alternateCloudName");
+    name->setPlaceholderText(tr("Snapshot name, e.g. Home - dragon roar")); layout->addWidget(name);
+    auto *list = new QListWidget(&dialog); list->setObjectName("alternateCloudList"); layout->addWidget(list);
+    auto *actions = new QHBoxLayout();
+    auto *save = new QPushButton(tr("Save new snapshot to iCloud folder"), &dialog); save->setObjectName("alternateCloudSave");
+    auto *refresh = new QPushButton(tr("Refresh"), &dialog); refresh->setObjectName("alternateCloudRefresh");
+    auto *restore = new QPushButton(tr("Restore selected"), &dialog); restore->setObjectName("alternateCloudRestore");
+    auto *backups = new QPushButton(tr("Local backups"), &dialog);
+    actions->addWidget(save); actions->addWidget(refresh); actions->addWidget(restore); actions->addWidget(backups);
+    layout->addLayout(actions);
+    auto *status = new QLabel(tr("iCloud for Windows must be signed in to the same Apple Account on both computers. "
+        "Writing a file here does not confirm that iCloud has uploaded it."), &dialog);
+    status->setObjectName("alternateCloudStatus"); status->setWordWrap(true); layout->addWidget(status);
+    auto persistFolder = [&]() {
+        m_settings->setValue("AlternateCloud/Folder", folder->text().trimmed()); m_settings->sync();
+    };
+    auto reload = [&]() {
+        list->clear();
+        const QString directory = folder->text().trimmed();
+        if (directory.isEmpty() || !QDir(directory).exists()) {
+            status->setText(tr("Select an iCloud Drive folder. A new subfolder will be created when saving.")); return;
+        }
+        persistFolder();
+        int skipped = 0;
+        for (const QFileInfo &info : QDir(directory).entryInfoList({"*.alternate.json"}, QDir::Files, QDir::Time)) {
+            AlternateCloudBundle bundle; QString problem;
+            if (!AlternateCloud::read(info.absoluteFilePath(), bundle, &problem)) { ++skipped; continue; }
+            auto *item = new QListWidgetItem(bundle.name + " — " + bundle.updated, list);
+            item->setData(Qt::UserRole, info.absoluteFilePath());
+            item->setToolTip(tr("Controller type: %1\n%2").arg(bundle.deviceType, info.absoluteFilePath()));
+        }
+        status->setText(tr("%1 snapshot(s) available locally. %2 unreadable or unfinished file(s) skipped. Check iCloud sync status if another machine's snapshot is missing.").arg(list->count()).arg(skipped));
+    };
+    connect(browse, &QPushButton::clicked, &dialog, [&]() {
+        const QString selected = QFileDialog::getExistingDirectory(&dialog, tr("Choose the shared iCloud Drive folder"), folder->text());
+        if (!selected.isEmpty()) { folder->setText(selected); reload(); }
+    });
+    connect(refresh, &QPushButton::clicked, &dialog, reload);
+    connect(save, &QPushButton::clicked, &dialog, [&]() {
+        const QString directory = folder->text().trimmed();
+        if (directory.isEmpty() || !QDir::isAbsolutePath(directory) || name->text().trimmed().isEmpty()) {
+            status->setText(tr("Choose an absolute iCloud folder path and enter a snapshot name.")); return;
+        }
+        if (!QDir().mkpath(directory)) { status->setText(tr("Could not create the selected folder.")); return; }
+        const QString path = QDir(directory).filePath(QUuid::createUuid().toString(QUuid::Id128) + ".alternate.json");
+        QString problem;
+        if (!saveAlternateCloudBundle(path, name->text().trimmed(), &problem)) { status->setText(problem); return; }
+        persistFolder(); reload();
+        status->setText(tr("Snapshot written to the iCloud folder. Wait for iCloud to finish syncing before restoring on another computer. Existing snapshots were kept."));
+    });
+    connect(restore, &QPushButton::clicked, &dialog, [&]() {
+        if (!list->currentItem()) { status->setText(tr("Select a snapshot first.")); return; }
+        if (QMessageBox::question(&dialog, tr("Restore Alternate snapshot"),
+            tr("Replace this controller's profile and all Alternate settings with the selected snapshot? "
+               "The current configuration will be backed up locally first, and rotation will stop.")) != QMessageBox::Yes) return;
+        QString result;
+        restoreAlternateCloudBundle(list->currentItem()->data(Qt::UserRole).toString(), &result);
+        status->setText(result);
+    });
+    connect(backups, &QPushButton::clicked, &dialog, []() {
+        const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/alternate-cloud/backups";
+        QDir().mkpath(path); QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
+    auto *close = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject); layout->addWidget(close);
+    reload(); dialog.resize(840, 540); dialog.exec();
 }
 
 void JoyTabWidget::showAlternatingSuitesDialog()
@@ -1966,10 +2296,20 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
     QLabel *help = new QLabel(
         tr("Add or remove assignment groups using existing assignments from buttons, axes, sticks, D-pads, or sensors. They run in "
-           "order and never overlap. Recorded actions can use a repeat count and finish before switching. 0 uses duration."),
+           "order and never overlap. Recorded actions can use a repeat count and finish before switching. 0 uses duration. "
+           "Key press count overrides the assignment: press a single key, with random hold and release-gap durations, then continue."),
         &dialog);
     help->setWordWrap(true);
     layout->addWidget(help);
+
+    auto *hotkeyEdit = new QKeySequenceEdit(QKeySequence(m_settings->value(alternatingHotkeySettingsKey()).toString()), &dialog);
+    hotkeyEdit->setObjectName("alternateToggleHotkey");
+    auto *hotkeyForm = new QFormLayout();
+    hotkeyForm->addRow(tr("Global start/stop hotkey:"), hotkeyEdit);
+    auto *clearHotkey = new QPushButton(tr("Clear hotkey"), &dialog);
+    connect(clearHotkey, &QPushButton::clicked, hotkeyEdit, &QKeySequenceEdit::clear);
+    hotkeyForm->addRow(clearHotkey);
+    layout->addLayout(hotkeyForm);
 
     // Stage preset changes until OK, just like the active rotation settings.
     QVariantMap presets = m_settings->value(alternatingSettingsGroup() + "/Presets").toMap();
@@ -1996,7 +2336,10 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     presetStatus->setWordWrap(true);
     layout->addWidget(presetStatus);
 
-    struct Row { QGroupBox *group; QComboBox *assignment; QDoubleSpinBox *minimum, *maximum, *wait; QSpinBox *repeats; QPushButton *remove; };
+    struct Row { QGroupBox *group; QComboBox *assignment; QDoubleSpinBox *minimum, *maximum, *wait; QSpinBox *repeats; QPushButton *remove;
+        QSpinBox *pressCount; QKeySequenceEdit *pressKey;
+        QDoubleSpinBox *holdMin, *holdMax, *gapMin, *gapMax;
+    };
     QList<Row> rows;
     auto *scroll = new QScrollArea(&dialog);
     scroll->setWidgetResizable(true);
@@ -2007,13 +2350,19 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     auto renumber = [&]() {
         for (int i = 0; i < rows.size(); ++i) {
             rows[i].group->setTitle(tr("Assignment set %1").arg(i + 1));
+            rows[i].pressCount->setObjectName(QString("alternatePressCount%1").arg(i + 1));
+            rows[i].pressKey->setObjectName(QString("alternatePressKey%1").arg(i + 1));
+            rows[i].holdMin->setObjectName(QString("alternateHoldMinimum%1").arg(i + 1));
+            rows[i].holdMax->setObjectName(QString("alternateHoldMaximum%1").arg(i + 1));
+            rows[i].gapMin->setObjectName(QString("alternateGapMinimum%1").arg(i + 1));
+            rows[i].gapMax->setObjectName(QString("alternateGapMaximum%1").arg(i + 1));
             rows[i].repeats->setObjectName(QString("alternateRepeatCount%1").arg(i + 1));
             rows[i].minimum->setObjectName(QString("alternateMinimum%1").arg(i + 1));
             rows[i].wait->setObjectName(QString("alternateWaitAfter%1").arg(i + 1));
             rows[i].remove->setEnabled(rows.size() > 2);
         }
     };
-    auto addRow = [&](const QString &id, int minimum, int maximum, int wait, int repeats) {
+    auto addRow = [&](const QString &id, int minimum, int maximum, int wait, int repeats, const QVariantMap &press = QVariantMap()) {
         Row row;
         row.group = new QGroupBox(contents);
         auto *form = new QFormLayout(row.group);
@@ -2031,19 +2380,40 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         row.repeats = new QSpinBox(row.group);
         row.repeats->setRange(0, 1000); row.repeats->setSpecialValueText(tr("Use duration")); row.repeats->setValue(repeats);
         row.repeats->setToolTip(tr("Recorded actions: play this many complete cycles before switching. 0 uses duration."));
+        row.pressCount = new QSpinBox(row.group);
+        row.pressCount->setRange(0, 10000); row.pressCount->setSpecialValueText(tr("Use assignment"));
+        row.pressCount->setValue(press.value("PressCount", 0).toInt());
+        row.pressCount->setToolTip(tr("Above zero: press the specified key this many times instead of running the assignment."));
+        row.pressKey = new QKeySequenceEdit(QKeySequence(press.value("PressKey", Qt::Key_X).toInt()), row.group);
+        row.holdMin = seconds(press.value("HoldMinimum", 500).toInt(), false);
+        row.holdMax = seconds(press.value("HoldMaximum", 700).toInt(), false);
+        row.gapMin = seconds(press.value("GapMinimum", 100).toInt(), false);
+        row.gapMax = seconds(press.value("GapMaximum", 200).toInt(), false);
         row.remove = new QPushButton(tr("Remove group"), row.group);
         form->addRow(tr("Assignment:"), row.assignment);
         form->addRow(tr("Minimum:"), row.minimum); form->addRow(tr("Maximum:"), row.maximum);
         form->addRow(tr("Recording repeats:"), row.repeats); form->addRow(tr("Wait after:"), row.wait);
+        form->addRow(tr("Key press count:"), row.pressCount);
+        form->addRow(tr("Key (single key):"), row.pressKey);
+        auto *holdRange = new QHBoxLayout(); holdRange->addWidget(row.holdMin); holdRange->addWidget(row.holdMax);
+        auto *gapRange = new QHBoxLayout(); gapRange->addWidget(row.gapMin); gapRange->addWidget(row.gapMax);
+        form->addRow(tr("Hold min / max:"), holdRange);
+        form->addRow(tr("Release gap min / max:"), gapRange);
         form->addRow(row.remove);
         groups->addWidget(row.group); rows.append(row);
         auto update = [this, row]() {
             const bool recorded = !recordedAssignmentPayload(resolveAlternatingSuiteButton(row.assignment->currentData().toString())).isEmpty();
-            row.repeats->setEnabled(recorded);
+            const bool counted = row.pressCount->value() > 0;
+            row.assignment->setEnabled(!counted);
+            row.pressKey->setEnabled(counted);
+            row.holdMin->setEnabled(counted); row.holdMax->setEnabled(counted);
+            row.gapMin->setEnabled(counted); row.gapMax->setEnabled(counted);
+            row.repeats->setEnabled(recorded && !counted);
             if (!recorded) row.repeats->setValue(0);
-            row.minimum->setEnabled(row.repeats->value() == 0); row.maximum->setEnabled(row.repeats->value() == 0);
+            row.minimum->setEnabled(!counted && row.repeats->value() == 0); row.maximum->setEnabled(!counted && row.repeats->value() == 0);
         };
         connect(row.assignment, qOverload<int>(&QComboBox::currentIndexChanged), &dialog, [update](int) { update(); });
+        connect(row.pressCount, qOverload<int>(&QSpinBox::valueChanged), &dialog, [update](int) { update(); });
         connect(row.repeats, qOverload<int>(&QSpinBox::valueChanged), &dialog, [update](int) { update(); });
         connect(row.remove, &QPushButton::clicked, &dialog, [&, row]() {
             for (int i = 0; i < rows.size(); ++i) if (rows[i].group == row.group) { rows.removeAt(i); break; }
@@ -2051,9 +2421,41 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         });
         update(); renumber();
     };
-    for (int i = 0; i < alternatingButtonIds.size(); ++i)
-        addRow(alternatingButtonIds[i], alternatingMinimums[i], alternatingMaximums[i], alternatingWaits[i], alternatingRepeats[i]);
+    for (int i = 0; i < alternatingButtonIds.size(); ++i) {
+        QVariantMap press;
+        press["PressCount"] = alternatingPressCounts[i]; press["PressKey"] = alternatingPressKeys[i];
+        press["HoldMinimum"] = alternatingHoldMinimums[i]; press["HoldMaximum"] = alternatingHoldMaximums[i];
+        press["GapMinimum"] = alternatingGapMinimums[i]; press["GapMaximum"] = alternatingGapMaximums[i];
+        addRow(alternatingButtonIds[i], alternatingMinimums[i], alternatingMaximums[i], alternatingWaits[i], alternatingRepeats[i], press);
+    }
+    auto pressSettings = [](const Row &row) {
+        QVariantMap item;
+        item["PressCount"] = row.pressCount->value();
+        const QKeySequence key = row.pressKey->keySequence();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        item["PressKey"] = key.isEmpty() ? 0 : key[0].toCombined();
+#else
+        item["PressKey"] = key.isEmpty() ? 0 : key[0];
+#endif
+        item["HoldMinimum"] = qRound(qMin(row.holdMin->value(), row.holdMax->value()) * 1000);
+        item["HoldMaximum"] = qRound(qMax(row.holdMin->value(), row.holdMax->value()) * 1000);
+        item["GapMinimum"] = qRound(qMin(row.gapMin->value(), row.gapMax->value()) * 1000);
+        item["GapMaximum"] = qRound(qMax(row.gapMin->value(), row.gapMax->value()) * 1000);
+        return item;
+    };
+    auto validPresses = [&]() {
+        for (const auto &row : rows) if (row.pressCount->value() > 0) {
+            const int alias = pressSettings(row).value("PressKey").toInt();
+            if (row.pressKey->keySequence().count() != 1 || (alias & Qt::KeyboardModifierMask) ||
+                !AntKeyMapper::getInstance()->returnVirtualKey(alias)) {
+                QMessageBox::warning(&dialog, tr("Key press count"), tr("Choose one keyboard key without modifiers for counted presses."));
+                return false;
+            }
+        }
+        return true;
+    };
     connect(savePreset, &QPushButton::clicked, &dialog, [&]() {
+        if (!validPresses()) return;
         const QString name = presetName->currentText().trimmed();
         if (name.isEmpty()) {
             presetStatus->setText(tr("Enter a scheme name first."));
@@ -2064,7 +2466,7 @@ void JoyTabWidget::showAlternatingSuitesDialog()
             return;
         QVariantList saved;
         for (const auto &row : rows) {
-            QVariantMap item;
+            QVariantMap item = pressSettings(row);
             item["Button"] = row.assignment->currentData();
             item["Minimum"] = qRound(qMin(row.minimum->value(), row.maximum->value()) * 1000);
             item["Maximum"] = qRound(qMax(row.minimum->value(), row.maximum->value()) * 1000);
@@ -2072,7 +2474,9 @@ void JoyTabWidget::showAlternatingSuitesDialog()
             item["Repeats"] = row.repeats->value();
             saved.append(item);
         }
-        presets[name] = saved;
+        QVariantMap scheme;
+        scheme["Groups"] = saved; scheme["Hotkey"] = hotkeyEdit->keySequence().toString(QKeySequence::PortableText);
+        presets[name] = scheme;
         if (presetName->findText(name) < 0) presetName->addItem(name);
         presetName->setCurrentText(name);
         presetStatus->setText(tr("Scheme \"%1\" saved. Click OK to keep changes.").arg(name));
@@ -2083,9 +2487,11 @@ void JoyTabWidget::showAlternatingSuitesDialog()
             presetStatus->setText(tr("Select a saved scheme first."));
             return;
         }
-        const QVariantList saved = presets.value(name).toList();
+        const QVariantMap scheme = presets.value(name).toMap();
+        const QVariantList saved = scheme.isEmpty() ? presets.value(name).toList() : scheme.value("Groups").toList();
         // Do not silently substitute another input when a profile has changed.
         for (const auto &value : saved) {
+            if (value.toMap().value("PressCount", 0).toInt() > 0) continue;
             const QString id = value.toMap().value("Button").toString();
             bool found = false;
             for (const auto &entry : buttons) if (entry.first == id) found = true;
@@ -2094,12 +2500,13 @@ void JoyTabWidget::showAlternatingSuitesDialog()
                 return;
             }
         }
+        if (!scheme.isEmpty()) hotkeyEdit->setKeySequence(QKeySequence(scheme.value("Hotkey").toString()));
         for (const auto &row : rows) delete row.group;
         rows.clear();
         for (const auto &value : saved) {
             const QVariantMap item = value.toMap();
             addRow(item.value("Button").toString(), item.value("Minimum").toInt(),
-                   item.value("Maximum").toInt(), item.value("Wait").toInt(), item.value("Repeats").toInt());
+                   item.value("Maximum").toInt(), item.value("Wait").toInt(), item.value("Repeats").toInt(), item);
         }
         presetStatus->setText(tr("Scheme \"%1\" loaded. Click OK to apply.").arg(name));
     });
@@ -2125,7 +2532,22 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     });
     layout->addWidget(add);
     auto *buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, [&]() {
+        if (!validPresses()) return;
+        for (const auto &row : rows) {
+            if (row.pressCount->value() > 0 && row.pressKey->keySequence() == hotkeyEdit->keySequence()) {
+                QMessageBox::warning(&dialog, tr("Hotkey conflicts with counted key"),
+                    tr("Choose a different start/stop shortcut so generated presses cannot toggle the rotation."));
+                return;
+            }
+        }
+        if (!registerAlternatingHotkey(hotkeyEdit->keySequence())) {
+            QMessageBox::warning(&dialog, tr("Global hotkey unavailable"),
+                tr("Choose a single shortcut that is not already registered by another feature or application."));
+            return;
+        }
+        dialog.accept();
+    });
     connect(buttonsBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttonsBox);
     dialog.resize(700, 650);
@@ -2148,8 +2570,13 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         m_settings->setValue("Button", alternatingButtonIds.last());
         m_settings->setValue("Minimum", low); m_settings->setValue("Maximum", high);
         m_settings->setValue("Wait", alternatingWaits.last()); m_settings->setValue("Repeats", alternatingRepeats.last());
+        const QVariantMap press = pressSettings(row);
+        for (auto it = press.cbegin(); it != press.cend(); ++it) m_settings->setValue(it.key(), it.value());
     }
-    m_settings->endArray(); m_settings->endGroup(); m_settings->sync(); m_settings->getLock()->unlock();
+    m_settings->endArray(); m_settings->endGroup();
+    m_settings->setValue(alternatingHotkeySettingsKey(), hotkeyEdit->keySequence().toString(QKeySequence::PortableText));
+    m_settings->sync(); m_settings->getLock()->unlock();
+    loadAlternatingSuiteSettings();
 }
 
 void JoyTabWidget::showKeyDelayDialog()

@@ -42,7 +42,7 @@ if compiler.name.lower() in {"c++.exe", "g++.exe"}:
     if recorder.exists():
         env["ANTIMICROX_RECORDER_TEST_FIXTURE"] = str(build / "recorder-fixture.json")
         subprocess.run([str(recorder), "--self-test"], env=env, check=True, timeout=30)
-    subprocess.run([str(exe)], cwd=root, env=env, check=True, timeout=30)
+    subprocess.run([str(exe)] + (["--alternate-only"] if "--alternate-only" in sys.argv[2:] else []), cwd=root, env=env, check=True, timeout=30)
     if "--native-hotkey" in sys.argv[2:]:
         env["QT_QPA_PLATFORM"] = "windows"
         subprocess.run([str(exe), "--native-hotkey"], cwd=root, env=env, check=True, timeout=30)
@@ -76,7 +76,7 @@ subprocess.run([str(script)], cwd=build, check=True)
 qt_dir = Path(re.search(r"^Qt6_DIR:PATH=(.*)$", cache, re.M).group(1)).parents[2]
 env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QPA_PLATFORM_PLUGIN_PATH=str(qt_dir / "plugins/platforms"),
            ANTIMICROX_TEST_ARTIFACT_DIR=str(build))
-subprocess.run([str(exe)], cwd=root, env=env, check=True, timeout=30)
+subprocess.run([str(exe)] + (["--alternate-only"] if "--alternate-only" in sys.argv[2:] else []), cwd=root, env=env, check=True, timeout=30)
 if "--native-hotkey" in sys.argv[2:]:
     env["QT_QPA_PLATFORM"] = "windows"
     subprocess.run([str(exe), "--native-hotkey"], cwd=root, env=env, check=True, timeout=30)
