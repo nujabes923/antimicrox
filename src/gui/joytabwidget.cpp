@@ -19,6 +19,7 @@
 #include "qtconnectionhelper.h"
 #include "actionlibrarydialog.h"
 #include "alternatecloud.h"
+#include <QXmlStreamReader>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QSaveFile>
@@ -2139,8 +2140,55 @@ bool JoyTabWidget::restoreAlternateCloudBundle(const QString &path, QString *err
     AlternateCloudBundle bundle;
     if (!AlternateCloud::read(path, bundle, error)) return false;
     if (bundle.deviceType != m_joystick->getXmlName()) {
-        *error = tr("This bundle requires a %1 controller profile. Select a matching controller tab first.").arg(bundle.deviceType);
-        return false;
+        // Preserve the source schema and input numbering in a virtual device.
+        // A physical controller is not needed for keyboard-driven playback.
+        auto *window = new QDialog(this);
+        window->setAttribute(Qt::WA_DeleteOnClose);
+        window->setWindowTitle(tr("Offline cloud workspace - %1").arg(bundle.name));
+        InputDevice *device = nullptr;
+        const QString offlineId = "CloudOffline-" + bundle.deviceType;
+        if (bundle.deviceType == "joystick") {
+            int buttons = 32, axes = 8, hats = 4;
+            QXmlStreamReader xml(bundle.profile);
+            while (!xml.atEnd()) {
+                xml.readNext();
+                if (!xml.isStartElement()) continue;
+                const auto attrs = xml.attributes();
+                const int index = attrs.value("index").toInt();
+                const QString tag = xml.name().toString();
+                if (tag == "button" || tag == "buttonname") buttons = qMax(buttons, index);
+                if (tag == "axis" || tag == "axisname") axes = qMax(axes, index);
+                if (tag == "dpad" || tag == "dpadname") hats = qMax(hats, index);
+                if (tag == "stickAxisAssociation")
+                    axes = qMax(axes, qMax(attrs.value("xAxis").toInt(), attrs.value("yAxis").toInt()));
+            }
+            auto *raw = new Joystick(nullptr, 0, m_settings, window, buttons, axes, hats);
+            raw->setOfflineUniqueID(offlineId);
+            device = raw;
+        } else {
+            auto *pad = new GameController(nullptr, 0, m_settings, 0, window);
+            pad->setOfflineUniqueID(offlineId);
+            device = pad;
+        }
+        auto *layout = new QVBoxLayout(window);
+        layout->addWidget(new QLabel(tr("Offline workspace: no physical controller required. Close the iCloud dialog to use this window."), window));
+        auto *tab = new JoyTabWidget(device, m_settings, window);
+        device->setParent(tab);
+        layout->addWidget(tab);
+        tab->refreshButtons();
+        tab->loadDeviceSettings();
+        if (!tab->restoreAlternateCloudBundle(path, error)) {
+            delete window;
+            return false;
+        }
+        connect(window, &QDialog::finished, tab, [tab]() {
+            tab->setAlternatingSuiteRunning(false);
+            tab->saveDeviceSettings(true);
+        });
+        window->resize(950, 750);
+        window->show();
+        *error += tr("\nOpened an offline workspace matching the snapshot. Close this iCloud dialog to use it.");
+        return true;
     }
     QByteArray importedProfile;
     if (!AlternateCloud::portableProfile(bundle.profile, bundle.deviceType, importedProfile, error, true)) return false;
@@ -2213,7 +2261,7 @@ void JoyTabWidget::showAlternateCloudDialog()
     auto *browse = new QPushButton(tr("Choose iCloud folder"), &dialog);
     folderRow->addWidget(folder, 1); folderRow->addWidget(browse); layout->addLayout(folderRow);
     auto *name = new QLineEdit(&dialog); name->setObjectName("alternateCloudName");
-    name->setPlaceholderText(tr("Snapshot name, e.g. Home - dragon roar")); layout->addWidget(name);
+    name->setText(property("alternateCloudSuggestedName").toString().isEmpty() ? QDateTime::currentDateTime().toString("yyyy-MM-dd HH-mm") : property("alternateCloudSuggestedName").toString()); name->setPlaceholderText(tr("Snapshot name, e.g. Home - dragon roar")); layout->addWidget(name);
     auto *list = new QListWidget(&dialog); list->setObjectName("alternateCloudList"); layout->addWidget(list);
     auto *actions = new QHBoxLayout();
     auto *save = new QPushButton(tr("Save new snapshot to iCloud folder"), &dialog); save->setObjectName("alternateCloudSave");
@@ -2221,6 +2269,17 @@ void JoyTabWidget::showAlternateCloudDialog()
     auto *restore = new QPushButton(tr("Restore selected"), &dialog); restore->setObjectName("alternateCloudRestore");
     auto *backups = new QPushButton(tr("Local backups"), &dialog);
     actions->addWidget(save); actions->addWidget(refresh); actions->addWidget(restore); actions->addWidget(backups);
+    auto *openFolder = new QPushButton(tr("Open sync folder"), &dialog);
+    layout->addWidget(openFolder);
+    connect(openFolder, &QPushButton::clicked, &dialog, [&]() {
+        const QString path = folder->text().trimmed();
+        if (path.isEmpty() || !QDir(path).exists()) {
+
+            QMessageBox::information(&dialog, tr("Sync folder"), tr("Choose an existing iCloud Drive folder first."));
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
     layout->addLayout(actions);
     auto *status = new QLabel(tr("iCloud for Windows must be signed in to the same Apple Account on both computers. "
         "Writing a file here does not confirm that iCloud has uploaded it."), &dialog);
@@ -2256,7 +2315,18 @@ void JoyTabWidget::showAlternateCloudDialog()
             status->setText(tr("Choose an absolute iCloud folder path and enter a snapshot name.")); return;
         }
         if (!QDir().mkpath(directory)) { status->setText(tr("Could not create the selected folder.")); return; }
-        const QString path = QDir(directory).filePath(QUuid::createUuid().toString(QUuid::Id128) + ".alternate.json");
+        QString fileName = name->text().trimmed();
+        const QString forbidden = QStringLiteral("<>:\"/\\|?*");
+        for (QChar &character : fileName) {
+            if (character.unicode() < 32 || forbidden.contains(character)) character = QChar('_');
+        }
+        fileName = fileName.left(80);
+        while (fileName.endsWith('.') || fileName.endsWith(' ')) fileName.chop(1);
+        if (fileName.isEmpty()) fileName = QStringLiteral("Snapshot");
+        const QString stem = fileName + " - " + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz");
+        QString path = QDir(directory).filePath(stem + ".alternate.json");
+        for (int suffix = 2; QFileInfo::exists(path); ++suffix)
+            path = QDir(directory).filePath(stem + "-" + QString::number(suffix) + ".alternate.json");
         QString problem;
         if (!saveAlternateCloudBundle(path, name->text().trimmed(), &problem)) { status->setText(problem); return; }
         persistFolder(); reload();
@@ -2531,7 +2601,14 @@ void JoyTabWidget::showAlternatingSuitesDialog()
         addRow(id, 1000, 1000, 0, 0);
     });
     layout->addWidget(add);
+    bool openCloudAfterSave = false;
     auto *buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    auto *saveAndCloud = buttonsBox->addButton(tr("Save and open iCloud..."), QDialogButtonBox::ActionRole);
+    connect(saveAndCloud, &QPushButton::clicked, &dialog, [&]() {
+        openCloudAfterSave = true;
+        buttonsBox->button(QDialogButtonBox::Ok)->click();
+        if (dialog.result() != QDialog::Accepted) openCloudAfterSave = false;
+    });
     connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, [&]() {
         if (!validPresses()) return;
         for (const auto &row : rows) {
@@ -2577,6 +2654,8 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     m_settings->setValue(alternatingHotkeySettingsKey(), hotkeyEdit->keySequence().toString(QKeySequence::PortableText));
     m_settings->sync(); m_settings->getLock()->unlock();
     loadAlternatingSuiteSettings();
+    setProperty("alternateCloudSuggestedName", presetName->currentText().trimmed());
+    if (openCloudAfterSave) showAlternateCloudDialog();
 }
 
 void JoyTabWidget::showKeyDelayDialog()
