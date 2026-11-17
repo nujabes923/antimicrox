@@ -479,6 +479,44 @@ int main(int argc, char **argv)
         pump();
         require(!first->getButtonState() && !second->getButtonState(), "stop releases both suites");
         require(factory.recorder()->presses == factory.recorder()->releases, "no keys left held after stop");
+        QTimer::singleShot(0, [&]() {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto *name = dialog->findChild<QComboBox *>("alternatePresetName");
+            require(name != nullptr, "scheme selector exists");
+            name->setCurrentText("Scene A");
+            dialog->findChild<QDoubleSpinBox *>("alternateWaitAfter1")->setValue(1.23);
+            dialog->findChild<QPushButton *>("alternateSavePreset")->click();
+            name->setCurrentText("Scene B");
+            dialog->findChild<QDoubleSpinBox *>("alternateWaitAfter1")->setValue(4.56);
+            dialog->findChild<QPushButton *>("alternateSavePreset")->click();
+            name->setCurrentText("Scene A");
+            dialog->findChild<QPushButton *>("alternateLoadPreset")->click();
+            require(dialog->findChild<QDoubleSpinBox *>("alternateWaitAfter1")->value() == 1.23,
+                    "switching schemes restores precise wait duration");
+            dialog->accept();
+        });
+        QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog");
+        settings.sync();
+        QSettings persisted(settings.fileName(), QSettings::IniFormat);
+        require(persisted.value(group + "Presets").toMap().size() == 2, "named schemes persisted to disk");
+        QTimer::singleShot(0, [&]() {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto *name = dialog->findChild<QComboBox *>("alternatePresetName");
+            require(name->count() == 2, "schemes restored when reopening setup");
+            name->setCurrentText("Scene B");
+            dialog->findChild<QPushButton *>("alternateLoadPreset")->click();
+            require(dialog->findChild<QDoubleSpinBox *>("alternateWaitAfter1")->value() == 4.56,
+                    "second saved scheme reloads");
+            pump();
+            dialog->grab().save(QDir(qEnvironmentVariable("ANTIMICROX_TEST_ARTIFACT_DIR")).filePath("alternate-schemes.png"));
+            name->setCurrentText("Cancelled scheme");
+            dialog->findChild<QPushButton *>("alternateSavePreset")->click();
+            dialog->reject();
+        });
+        QMetaObject::invokeMethod(&tab, "showAlternatingSuitesDialog");
+        require(settings.value(group + "Presets").toMap().size() == 2, "cancel discards scheme changes");
+        require(settings.value(group + "Groups/1/Wait").toInt() == 1230, "cancel preserves applied scheme");
+        settings.remove(group + "Groups");
         require(QMetaObject::invokeMethod(&tab, "showAlternatingSuitesPopup"), "open alternate popup");
         QWidget *popup = nullptr;
         for (QWidget *window : QApplication::topLevelWidgets())
@@ -524,6 +562,10 @@ int main(int argc, char **argv)
     pump();
     require(!first->getButtonState() && !second->getButtonState(), "closing offline tab releases keys");
     require(factory.recorder()->presses == factory.recorder()->releases, "no keys left held after closing tab");
+    if (QCoreApplication::arguments().contains("--alternate-only")) {
+        std::puts("PASS: alternate schemes, persistence, cancellation and offline playback");
+        return 0;
+    }
     {
         JoyButton *third = controller.getActiveSetJoystick()->getJoyButton(2);
         JoyButton *fourth = controller.getActiveSetJoystick()->getJoyButton(3);

@@ -1971,6 +1971,31 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     help->setWordWrap(true);
     layout->addWidget(help);
 
+    // Stage preset changes until OK, just like the active rotation settings.
+    QVariantMap presets = m_settings->value(alternatingSettingsGroup() + "/Presets").toMap();
+    auto *presetBar = new QHBoxLayout();
+    auto *presetName = new QComboBox(&dialog);
+    presetName->setObjectName("alternatePresetName");
+    presetName->setEditable(true);
+    presetName->addItems(presets.keys());
+    presetName->setCurrentIndex(-1);
+    presetName->setInsertPolicy(QComboBox::NoInsert);
+    auto *savePreset = new QPushButton(tr("Save scheme"), &dialog);
+    savePreset->setObjectName("alternateSavePreset");
+    auto *loadPreset = new QPushButton(tr("Load scheme"), &dialog);
+    loadPreset->setObjectName("alternateLoadPreset");
+    auto *deletePreset = new QPushButton(tr("Delete scheme"), &dialog);
+    deletePreset->setObjectName("alternateDeletePreset");
+    presetBar->addWidget(new QLabel(tr("Scheme:"), &dialog));
+    presetBar->addWidget(presetName, 1);
+    presetBar->addWidget(savePreset);
+    presetBar->addWidget(loadPreset);
+    presetBar->addWidget(deletePreset);
+    layout->addLayout(presetBar);
+    auto *presetStatus = new QLabel(tr("Enter a name to save. Select a scheme and load it to switch. OK applies and saves changes."), &dialog);
+    presetStatus->setWordWrap(true);
+    layout->addWidget(presetStatus);
+
     struct Row { QGroupBox *group; QComboBox *assignment; QDoubleSpinBox *minimum, *maximum, *wait; QSpinBox *repeats; QPushButton *remove; };
     QList<Row> rows;
     auto *scroll = new QScrollArea(&dialog);
@@ -2028,6 +2053,65 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     };
     for (int i = 0; i < alternatingButtonIds.size(); ++i)
         addRow(alternatingButtonIds[i], alternatingMinimums[i], alternatingMaximums[i], alternatingWaits[i], alternatingRepeats[i]);
+    connect(savePreset, &QPushButton::clicked, &dialog, [&]() {
+        const QString name = presetName->currentText().trimmed();
+        if (name.isEmpty()) {
+            presetStatus->setText(tr("Enter a scheme name first."));
+            return;
+        }
+        if (presets.contains(name) && QMessageBox::question(&dialog, tr("Replace scheme"),
+                tr("Replace the saved scheme \"%1\"?").arg(name)) != QMessageBox::Yes)
+            return;
+        QVariantList saved;
+        for (const auto &row : rows) {
+            QVariantMap item;
+            item["Button"] = row.assignment->currentData();
+            item["Minimum"] = qRound(qMin(row.minimum->value(), row.maximum->value()) * 1000);
+            item["Maximum"] = qRound(qMax(row.minimum->value(), row.maximum->value()) * 1000);
+            item["Wait"] = qRound(row.wait->value() * 1000);
+            item["Repeats"] = row.repeats->value();
+            saved.append(item);
+        }
+        presets[name] = saved;
+        if (presetName->findText(name) < 0) presetName->addItem(name);
+        presetName->setCurrentText(name);
+        presetStatus->setText(tr("Scheme \"%1\" saved. Click OK to keep changes.").arg(name));
+    });
+    connect(loadPreset, &QPushButton::clicked, &dialog, [&]() {
+        const QString name = presetName->currentText().trimmed();
+        if (!presets.contains(name)) {
+            presetStatus->setText(tr("Select a saved scheme first."));
+            return;
+        }
+        const QVariantList saved = presets.value(name).toList();
+        // Do not silently substitute another input when a profile has changed.
+        for (const auto &value : saved) {
+            const QString id = value.toMap().value("Button").toString();
+            bool found = false;
+            for (const auto &entry : buttons) if (entry.first == id) found = true;
+            if (!found) {
+                presetStatus->setText(tr("This scheme uses an assignment unavailable in the current profile. Load its controller profile first."));
+                return;
+            }
+        }
+        for (const auto &row : rows) delete row.group;
+        rows.clear();
+        for (const auto &value : saved) {
+            const QVariantMap item = value.toMap();
+            addRow(item.value("Button").toString(), item.value("Minimum").toInt(),
+                   item.value("Maximum").toInt(), item.value("Wait").toInt(), item.value("Repeats").toInt());
+        }
+        presetStatus->setText(tr("Scheme \"%1\" loaded. Click OK to apply.").arg(name));
+    });
+    connect(deletePreset, &QPushButton::clicked, &dialog, [&]() {
+        const QString name = presetName->currentText().trimmed();
+        if (!presets.contains(name)) return;
+        if (QMessageBox::question(&dialog, tr("Delete scheme"),
+                tr("Delete scheme \"%1\"?").arg(name)) != QMessageBox::Yes) return;
+        presets.remove(name);
+        presetName->removeItem(presetName->findText(name));
+        presetStatus->setText(tr("Scheme deleted. Click OK to keep changes."));
+    });
     auto *add = new QPushButton(tr("Add group"), &dialog);
     add->setObjectName("alternateAddGroup");
     connect(add, &QPushButton::clicked, &dialog, [&]() {
@@ -2050,6 +2134,7 @@ void JoyTabWidget::showAlternatingSuitesDialog()
     alternatingButtonIds.clear(); alternatingMinimums.clear(); alternatingMaximums.clear(); alternatingWaits.clear(); alternatingRepeats.clear();
     m_settings->getLock()->lock();
     m_settings->beginGroup(alternatingSettingsGroup());
+    m_settings->setValue("Presets", presets);
     m_settings->remove("Groups");
     m_settings->beginWriteArray("Groups", rows.size());
     for (int i = 0; i < rows.size(); ++i) {
